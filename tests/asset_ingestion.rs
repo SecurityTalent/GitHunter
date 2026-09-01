@@ -189,3 +189,29 @@ fn asn_and_cidr_are_normalized_and_deduplicated() {
         .success()
         .stdout(predicate::str::contains("IN_SCOPE"));
 }
+
+#[test]
+fn asset_export_is_clean_pipeline_output() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "export-test"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "one.example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "two.example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "export", "--type", "subdomain"])
+        .assert()
+        .success()
+        .stdout("one.example.com\ntwo.example.com\n");
+}

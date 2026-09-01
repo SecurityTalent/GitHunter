@@ -148,6 +148,18 @@ pub enum AssetCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Write canonical asset values to stdout, one per line, for Unix pipelines.
+    Export {
+        /// Filter by asset type.
+        #[arg(long = "type")]
+        asset_type: Option<String>,
+        /// Filter by scope status (IN_SCOPE, OUT_OF_SCOPE, UNKNOWN).
+        #[arg(long)]
+        scope: Option<String>,
+        /// Filter by observation source.
+        #[arg(long)]
+        source: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -314,6 +326,16 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
                 scope.as_deref(),
                 source.as_deref(),
                 json,
+            ),
+            AssetCommand::Export {
+                asset_type,
+                scope,
+                source,
+            } => asset_export(
+                &db,
+                asset_type.as_deref(),
+                scope.as_deref(),
+                source.as_deref(),
             ),
         },
         P0Command::Tool(args) => match args.command {
@@ -923,6 +945,44 @@ fn asset_list(
             let (_, kind, val, scope, _, last_seen, sources) = row?;
             println!("{scope:<12} {kind:<10} {val:<36} {sources:<20} {last_seen:<24}");
         }
+    }
+    Ok(())
+}
+
+/// Emits values only (no headings or status text), making it safe to pipe into
+/// other programs without requiring text parsing.
+fn asset_export(
+    db: &Connection,
+    type_filter: Option<&str>,
+    scope_filter: Option<&str>,
+    source_filter: Option<&str>,
+) -> Result<()> {
+    let mut query = String::from("SELECT DISTINCT a.normalized_value FROM assets a WHERE 1=1 ");
+    let mut values: Vec<String> = Vec::new();
+    if let Some(kind) = type_filter {
+        let kind = AssetType::parse(kind)
+            .map(|k| k.as_str().to_owned())
+            .unwrap_or_else(|| kind.to_ascii_lowercase());
+        query.push_str("AND a.asset_type=? ");
+        values.push(kind);
+    }
+    if let Some(scope) = scope_filter {
+        query.push_str("AND a.scope_status=? ");
+        values.push(scope.to_ascii_uppercase());
+    }
+    if let Some(source) = source_filter {
+        query.push_str(
+            "AND EXISTS (SELECT 1 FROM asset_observations o WHERE o.asset_id=a.id AND o.source=?) ",
+        );
+        values.push(source.to_owned());
+    }
+    query.push_str("ORDER BY a.normalized_value");
+    let params: Vec<&dyn rusqlite::ToSql> =
+        values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+    let mut statement = db.prepare(&query)?;
+    let rows = statement.query_map(params.as_slice(), |row| row.get::<_, String>(0))?;
+    for row in rows {
+        println!("{}", row?);
     }
     Ok(())
 }
