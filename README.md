@@ -45,6 +45,16 @@ It is intended for authorized bug bounty programs, penetration tests, labs, CTFs
 cargo install --git https://github.com/SecurityTalent/GitHunter.git
 ```
 
+If Cargo's bin directory is not already on your `PATH`, add it for the current
+shell session:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Add the same line to your shell profile (for example, `~/.bashrc` or `~/.zshrc`)
+to make it persistent.
+
 ### Build from source
 
 ```bash
