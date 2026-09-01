@@ -6,6 +6,8 @@ GITHUNTER uses a small, layered Rust layout so each concern has a stable home.
 githunter/
 ├── Cargo.toml                 # package manifest and dependencies
 ├── README.md                  # setup and supported workflow
+├── install.sh                 # one-line installer script
+├── LICENSE                    # Apache-2.0 license
 ├── docs/
 │   ├── architecture.md         # architecture decisions
 │   ├── cli-design.md           # command hierarchy and output contracts
@@ -23,16 +25,21 @@ githunter/
 │   ├── application/            # use-case orchestration
 │   │   ├── mod.rs
 │   │   └── research_state.rs
-│   ├── domain/                 # pure validation and scope matching
+│   ├── domain/                 # pure validation, normalization, and tool models
 │   │   ├── mod.rs
-│   │   └── asset.rs
-│   ├── database/               # SQLite schema and bootstrap
+│   │   ├── asset.rs
+│   │   └── tool.rs
+│   ├── database/               # SQLite schema, migrations (WAL mode)
 │   │   └── mod.rs
-│   └── repository/             # .githunter creation and discovery
+│   └── repository/             # .githunter creation, discovery, and file persistence
 │       └── mod.rs
 └── tests/
     ├── init.rs                 # repository initialization behaviour
-    └── research_state.rs       # target → scope → asset → snapshot → diff flow
+    ├── research_state.rs       # target → scope → asset → snapshot → diff flow
+    ├── scope_workflow.rs       # bulk scope files, comments, deduplication, precedence
+    ├── asset_ingestion.rs      # mixed asset types, single add, stdin, multi-source provenance
+    ├── tools_workflow.rs       # tool config, validation, execution, workflow automation
+    └── recommend_and_completion.rs # advisory recommendations and shell completion
 ```
 
 Generated build files live in `target/` and are intentionally excluded from

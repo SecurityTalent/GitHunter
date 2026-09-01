@@ -16,25 +16,28 @@ Build GITHUNTER: an offline Security Research Version Control CLI for authorized
 
 ## Current status
 
-**P0 research-state workflow implemented.** The repository includes the Rust
-package, SQLite bootstrap schema, local repository layout, target and scope
-tracking, text asset import, immutable snapshots, snapshot diffs, status, and
-timeline. The public command tree is direct (`githunter target ...`,
-`githunter snapshot ...`) and matches the README and CLI design.
+**P0 & Research Extension Milestones Implemented:**
+1. Core research-state workflow (init, target, scope, asset, snapshot, diff, status, timeline).
+2. Bulk file-based scope rules with `#` comments, inline comments, and database-level deduplication.
+3. Flexible asset ingestion (single `asset add`, file `asset import`, stdin/pipeline `cat | asset import -`).
+4. Mixed asset classification & canonicalization (`DOMAIN`, `SUBDOMAIN`, `IP`, `IP_PORT`, `URL`, `ENDPOINT`).
+5. Multi-source provenance tracking (multiple observations linked to a single canonical asset without duplication).
+6. Configurable external tool subsystem with safe process argument vectors (opt-in only, no shell execution) and direct stdout asset ingestion.
+7. Multi-step automated workflow orchestration.
+8. Advisory recommendation engine (`githunter recommend`).
+9. Shell completions generator for Bash, Zsh, Fish, and PowerShell (`githunter completions <shell>`).
 
 ## Next milestone
 
 P1 adds research sessions, hypotheses, tests, findings, evidence, notes, and
-Markdown reports. P2 work (doctor, backups, search, completions, and large
-dataset optimization) remains deliberately deferred until P1 is stable.
+Markdown reports.
 
 ## Validation
 
-On 2026-09-01, after installing stable Rust 1.98.0, the bootstrap passed:
-
-- `cargo fmt --check`
-- `cargo clippy -- -D warnings`
-- `cargo test` (2 integration tests passed)
+- `cargo fmt --check` (Clean formatting)
+- `cargo clippy -- -D warnings` (0 warnings)
+- `cargo test` (16 unit and integration tests passed)
+- Release build optimized binary: `target/release/githunter`
 
 ## Risks and decisions register
 
