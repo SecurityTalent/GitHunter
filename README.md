@@ -42,11 +42,16 @@ It is intended for authorized bug bounty programs, penetration tests, labs, CTFs
 ### Cargo
 
 ```bash
-cargo install --git https://github.com/SecurityTalent/GitHunter.git
+cargo install --git https://github.com/SecurityTalent/GitHunter.git --locked
 ```
 
-If Cargo's bin directory is not already on your `PATH`, add it for the current
-shell session on Linux or macOS:
+This is the only installation command needed. Cargo installs `githunter` into
+its global bin directory (`$CARGO_HOME/bin`, normally `~/.cargo/bin`). The
+standard Rustup installation adds that directory to your user `PATH`, so every
+new terminal can run `githunter` from any directory.
+
+If Rust/Cargo was installed without Rustup or an existing terminal cannot find
+`githunter`, add Cargo's bin directory to `PATH` once. On Linux or macOS:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -55,46 +60,17 @@ export PATH="$HOME/.cargo/bin:$PATH"
 Add the same line to your shell profile (for example, `~/.bashrc` or `~/.zshrc`)
 to make it persistent.
 
-### Linux (global command)
-
-From a clone of this repository, run:
-
-```bash
-./install.sh
-```
-
-The installer builds GitHunter, installs it for the current user in
-`~/.local/bin`, and permanently adds that directory to `PATH` for login shells
-and the user's Bash or Zsh terminal. Open a new terminal, then run it from any
-directory:
-
-```bash
-githunter --help
-```
-
-Git and Rust/Cargo are required. Set `GITHUNTER_INSTALL_DIR` before running
-the installer if you need a different installation directory.
-
-### Windows (global command)
-
-From a clone of this repository, run the PowerShell installer:
+On Windows, Cargo's normal global bin directory is
+`%USERPROFILE%\.cargo\bin`. The official Rustup installer configures it for
+new PowerShell, Command Prompt, and Windows Terminal sessions. If needed, add
+it to the current PowerShell session with:
 
 ```powershell
-.\install.ps1
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 ```
 
-It builds the release binary, installs it to
-`%LOCALAPPDATA%\GitHunter\bin`, and adds that folder to your persistent
-user `PATH`. Close and open a new PowerShell, CMD, or Windows Terminal window;
-then `githunter` works from any directory:
-
-```powershell
-githunter --help
-```
-
-The installer requires Git and Rust/Cargo. GitHunter itself is global, but
-external programs used by saved tool configurations (such as `httpx`) must
-also be installed and available on `PATH` separately.
+External programs used by saved tool configurations (such as `httpx`) are not
+bundled with GitHunter; install those separately and ensure they are on `PATH`.
 
 ### Build from source
 
@@ -104,13 +80,9 @@ cd GitHunter
 cargo build --release
 ```
 
-The release binary is written to `target/release/`. On Windows, ensure
-`%USERPROFILE%\.cargo\bin` is in `PATH` when using Cargo installation. For the
-current PowerShell session, run:
-
-```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-```
+The release binary is written to `target/release/`. For a source build, either
+run it directly from that directory or copy it into a directory already on
+your `PATH`.
 
 Confirm the installation before creating a project:
 
