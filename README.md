@@ -55,6 +55,27 @@ export PATH="$HOME/.cargo/bin:$PATH"
 Add the same line to your shell profile (for example, `~/.bashrc` or `~/.zshrc`)
 to make it persistent.
 
+### Windows (global command)
+
+From a clone of this repository, run the PowerShell installer:
+
+```powershell
+.\install.ps1
+```
+
+It builds the release binary, installs it to
+`%LOCALAPPDATA%\GitHunter\bin`, and adds that folder to your persistent
+user `PATH`. Close and open a new PowerShell, CMD, or Windows Terminal window;
+then `githunter` works from any directory:
+
+```powershell
+githunter --help
+```
+
+The installer requires Git and Rust/Cargo. GitHunter itself is global, but
+external programs used by saved tool configurations (such as `httpx`) must
+also be installed and available on `PATH` separately.
+
 ### Build from source
 
 ```bash
