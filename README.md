@@ -1,7 +1,7 @@
 # 🎯 GitHunter
 
 > **Offline, Local-First Security Research Version Control CLI**  
-> Cryptographic state management, scope tracking, and attack surface diffing for authorized security research, bug bounties, pentesting, labs, and CTFs.
+> Cryptographic state management, scope tracking, attack surface diffing, and configurable tool workflows for authorized security research, bug bounties, pentesting, labs, and CTFs.
 
 ---
 
@@ -9,12 +9,15 @@
 
 **GitHunter** is a version-control system built specifically for security researchers. It tracks what was observed, what changed, and the provenance of your findings over time.
 
-- 🔒 **100% Offline & Local-First:** Never makes network requests, executes shell commands, or runs automated scanners.
+- 🔒 **100% Offline & Local-First:** Never makes network requests, executes shell commands, or runs automated scanners without explicit opt-in.
 - 📜 **Cryptographic Snapshots:** Immutable state capture powered by SHA-256 manifests.
-- 🎯 **Deterministic Scope Enforcement:** Real-time checking against explicit `IN_SCOPE` and `OUT_OF_SCOPE` wildcard rules.
-- ⚡ **Deterministic Diff Engine:** Instantly identify newly introduced or removed assets between snapshots.
+- 🎯 **Deterministic Scope Enforcement & Deduplication:** Real-time checking against explicit `IN_SCOPE` and `OUT_OF_SCOPE` wildcard rules, loaded individually or via rule files with `#` comment support.
+- ⚡ **Flexible Ingestion & Mixed Asset Types:** Ingest Domains, Subdomains, IPv4/IPv6, IP:Port sockets, URLs, and Endpoints from single commands, files, or stdin pipes.
+- 🔍 **Multi-Source Provenance Tracking:** Deduplicates canonical assets across multiple tools (e.g. Subfinder, Amass, httpx) while preserving observation history.
+- 🛠️ **Configurable Tool & Workflow Subsystem:** Explicit, opt-in execution of your favorite CLI tools with automatic stdout pipeline ingestion into GitHunter.
+- 💡 **Advisory Recommendation System:** Analyzes current research state and suggests logical next steps without executing anything automatically.
+- 📊 **Deterministic Diff Engine:** Instantly identify newly introduced or removed assets between snapshots.
 - 🗄️ **Robust Local Storage:** Powered by embedded SQLite (WAL mode, foreign keys) and portable `.githunter/` repositories.
-- ⏱️ **Immutable Timeline & Provenance:** Full audit trail for imported outputs (e.g. Subfinder, Amass, Burp, BBRF).
 
 ---
 
@@ -73,61 +76,83 @@ sudo cp target/release/githunter /usr/local/bin/   # Linux / macOS
 
 ## ⚡ Quickstart Guide
 
-### 2. Basic Workflow
-
-#### Step 1: Initialize a Project
+### Step 1: Initialize a Project
 ```bash
-# Initialize a GitHunter repo in the current directory
+# Initialize a GitHunter repository in the current directory
 githunter init --name "hackerone-target"
 ```
 
-#### Step 2: Add Authorized Targets & Scope Rules
+### Step 2: Add Authorized Targets & Scope Rules
 ```bash
-# Add authorized target root
+# Register authorized target root
 githunter target add "target.com" --authorization "HackerOne Bug Bounty Program"
 
-# Define In-Scope rules
+# Add single scope rule
 githunter scope add "*.target.com"
 githunter scope add "target.com"
 
-# Define Out-of-Scope exclusions
-githunter scope out add "admin.target.com"
-githunter scope out add "internal.target.com"
+# Or load bulk scope rules from a file (supports comments and auto-deduplication)
+githunter scope add --file scope.txt
+githunter scope out add --file outscope.txt
 
-# Check status of any asset against scope rules
-githunter scope check "api.target.com"      # Outputs: IN_SCOPE  api.target.com
-githunter scope check "admin.target.com"    # Outputs: OUT_OF_SCOPE  admin.target.com
-githunter scope check "otherdomain.com"     # Outputs: UNKNOWN  otherdomain.com
+# Check scope classification of any asset
+githunter scope check "api.target.com"          # Returns: IN_SCOPE
+githunter scope check "admin.target.com"        # Returns: OUT_OF_SCOPE
+githunter scope check "https://target.com/api"  # Returns: IN_SCOPE
+githunter scope check "otherdomain.com"         # Returns: UNKNOWN
 ```
 
-#### Step 3: Ingest Discovered Assets
-Import discovered subdomains, IPs, or URLs from your external recon outputs (e.g., Subfinder, httpx, Amass, Burp):
+### Step 3: Ingest Assets (Flexible Input & Mixed Types)
+GitHunter automatically normalizes and classifies mixed asset types (`DOMAIN`, `SUBDOMAIN`, `IP`, `IP_PORT`, `URL`, `ENDPOINT`):
 
 ```bash
-# Import assets from a text file (one per line)
+# A) Single asset addition
+githunter asset add "api.target.com"
+githunter asset add "https://target.com/login" --source "burp"
+
+# B) File import (supports mixed asset types in one file)
 githunter asset import assets.txt --source "subfinder"
 
-# List all tracked assets and their scope classification
-githunter asset list
+# C) Stdin / Pipeline ingestion
+cat assets.txt | githunter asset import --source "amass"
+subfinder -d target.com -silent | githunter asset import --source "subfinder"
+
+# D) List assets with filtering or JSON output
+githunter asset list --type subdomain
+githunter asset list --scope in_scope
+githunter asset list --json
 ```
 
-#### Step 4: Create Immutable Snapshots
+### Step 4: Configure External Security Tools & Workflows (Opt-In)
+Tools are defined locally and only run when explicitly triggered:
+
 ```bash
-# Create a baseline snapshot
+# Register a tool definition
+githunter tool add \
+  --name "subfinder" \
+  --executable "subfinder" \
+  --description "Passive subdomain discovery" \
+  --args "-d {target} -silent" \
+  --tags "subdomain-discovery,passive"
+
+# Validate tool configuration and verify executable existence in PATH
+githunter tool validate subfinder
+
+# Run tool explicitly and auto-ingest stdout into GitHunter asset pipeline
+githunter tool run subfinder
+
+# Create an automated multi-step workflow
+githunter workflow add --name "passive-recon" --steps "subfinder,httpx" --description "Full passive recon flow"
+githunter workflow run passive-recon
+```
+
+### Step 5: Create Immutable Snapshots & Diff Over Time
+```bash
+# Create baseline snapshot
 githunter snapshot create --note "Day 1 Recon Baseline"
 
-# List snapshots
-githunter snapshot list
-```
-
-#### Step 5: Diff Attack Surface Over Time
-When you perform recon later, import new results and diff against your historical snapshots:
-
-```bash
-# Import newly observed recon data
+# (After running new discovery or importing new scans)
 githunter asset import new_recon.txt --source "httpx"
-
-# Create a new snapshot
 githunter snapshot create --note "Day 7 Recon Update"
 
 # Compare changes between snapshots
@@ -141,8 +166,11 @@ Added: 4
 Removed: 0
 ```
 
-#### Step 6: Inspect Status & Timeline
+### Step 6: Get Recommendations & Inspect Status
 ```bash
+# Advisory recommendations based on current project state
+githunter recommend
+
 # Show project status overview
 githunter status
 
@@ -160,12 +188,24 @@ githunter timeline
 | `githunter project show` | Display project metadata, ID, and schema version |
 | `githunter target add <val> [--authorization <note>]` | Add an authorized primary target |
 | `githunter target list` | List all registered project targets |
-| `githunter scope add <pattern>` | Add an `IN_SCOPE` wildcard or exact rule |
-| `githunter scope out add <pattern>` | Add an `OUT_OF_SCOPE` exclusion rule |
+| `githunter scope add [<pattern>] [--file <path>]` | Add an `IN_SCOPE` rule or import rule file |
+| `githunter scope out add [<pattern>] [--file <path>]` | Add an `OUT_OF_SCOPE` rule or import exclusion file |
 | `githunter scope list` | List all defined scope rules |
 | `githunter scope check <value>` | Test an asset against current scope rules |
-| `githunter asset import <file> [--source <name>]` | Import domain, IP, or URL assets from file |
-| `githunter asset list` | List tracked assets with scope classification |
+| `githunter asset add <value> [--source <source>]` | Ingest a single asset (domain, URL, IP, socket, endpoint) |
+| `githunter asset import [<file>] [--source <source>]` | Ingest assets from a file or stdin pipe (`-`) |
+| `githunter asset list [--type <t>] [--scope <s>] [--json]` | List tracked assets with filters and JSON support |
+| `githunter tool list` | List all configured external tools |
+| `githunter tool show <name>` | Show full configuration for a tool |
+| `githunter tool add --name <n> --executable <e> ...` | Add or configure an external tool |
+| `githunter tool remove <name>` | Remove a configured tool |
+| `githunter tool validate <name>` | Check tool syntax, args, and executable availability |
+| `githunter tool run <name|all> [--target <t>]` | Explicitly execute a tool and ingest output |
+| `githunter workflow list` | List configured automated workflows |
+| `githunter workflow add --name <n> --steps <s1,s2>` | Create an ordered multi-step tool workflow |
+| `githunter workflow run <name>` | Execute a workflow in deterministic sequence |
+| `githunter recommend` | Advisory next-step recommendations based on state |
+| `githunter completions <shell>` | Generate shell autocomplete scripts (`bash`, `zsh`, `fish`, `powershell`) |
 | `githunter snapshot create [--note <note>]` | Create a cryptographic snapshot of current assets |
 | `githunter snapshot list` | List all historical snapshots |
 | `githunter diff` | Deterministic diff between the last two snapshots |
@@ -188,9 +228,9 @@ GitHunter is designed with strict domain separation and a layered Rust architect
 src/
 ├── cli/           # CLI parsing (clap) & user formatting
 ├── application/   # Orchestration & transactional services
-├── domain/        # Pure business rules (normalization, pattern matching)
+├── domain/        # Pure business rules (normalization, pattern matching, tool models)
 ├── database/      # SQLite schema, migrations (WAL mode)
-├── repository/    # Local repository discovery & lifecycle
+├── repository/    # Local repository discovery, tools & workflows persistence
 └── main.rs        # Application entrypoint
 ```
 
@@ -198,9 +238,11 @@ src/
 ```text
 .githunter/
 ├── config.toml              # Project configuration
-├── githunter.db             # Embedded SQLite database
-├── objects/sha256/          # Content-addressed snapshot storage
+├── githunter.db             # Embedded SQLite database (WAL mode)
+├── objects/sha256/          # Content-addressed snapshot manifests
 ├── metadata/project.json    # Project identity
+├── tools/                   # User-defined tool definitions (.toml)
+├── workflows/               # User-defined workflows (.toml)
 ├── locks/                   # Process locking
 └── backups/                 # Database snapshots & backups
 ```
@@ -210,7 +252,8 @@ src/
 ## 🛡️ Security & Ethics Principles
 
 - **Authorization First:** Observation does not imply authorization. Non-matching assets default to `UNKNOWN`.
-- **Zero Recon Execution:** GitHunter never makes network requests or runs payloads; it safely stores your outputs.
+- **Opt-In Tool Execution:** Tools are never executed implicitly or from imported asset content.
+- **Safe Process Spawning:** Arguments are passed directly via arrays (`Command::args`); no shell interpreters (`sh -c`, `cmd.exe /c`) are used, preventing shell injection vulnerabilities.
 - **Safe Evidence Ingestion:** All imports are normalized, hashed with SHA-256, and kept local.
 - **Data Integrity:** SQLite ACID transactions, foreign keys, and WAL journal mode prevent corruption.
 
@@ -227,7 +270,7 @@ cargo fmt --check
 # Run linter
 cargo clippy -- -D warnings
 
-# Execute unit and integration tests
+# Execute unit and integration tests (16 tests)
 cargo test
 ```
 

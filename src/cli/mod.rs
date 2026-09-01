@@ -29,10 +29,26 @@ pub struct Cli {
 enum Commands {
     /// Initialize a GitHunter repository in the selected directory.
     Init(init::InitArgs),
+    /// Display project metadata.
     Project(research_state::ProjectArgs),
+    /// Manage authorized targets.
     Target(research_state::TargetArgs),
+    /// Manage explicit in-scope and out-of-scope rules.
     Scope(research_state::ScopeArgs),
+    /// Ingest, manage, and inspect observed assets.
     Asset(research_state::AssetArgs),
+    /// Manage and inspect external security tools.
+    Tool(research_state::ToolArgs),
+    /// Manage and run automated tool workflows.
+    Workflow(research_state::WorkflowArgs),
+    /// Advisory recommendations based on project state.
+    Recommend,
+    /// Generate shell completion scripts.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Create and inspect immutable security-state snapshots.
     Snapshot(research_state::SnapshotArgs),
     /// Compare the two most recent security-state snapshots.
     Diff,
@@ -56,6 +72,18 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Commands::Asset(args) => {
             research_state::execute(cli.repo, research_state::P0Command::Asset(args))
+        }
+        Commands::Tool(args) => {
+            research_state::execute(cli.repo, research_state::P0Command::Tool(args))
+        }
+        Commands::Workflow(args) => {
+            research_state::execute(cli.repo, research_state::P0Command::Workflow(args))
+        }
+        Commands::Recommend => {
+            research_state::execute(cli.repo, research_state::P0Command::Recommend)
+        }
+        Commands::Completions { shell } => {
+            research_state::execute(cli.repo, research_state::P0Command::Completions { shell })
         }
         Commands::Snapshot(args) => {
             research_state::execute(cli.repo, research_state::P0Command::Snapshot(args))

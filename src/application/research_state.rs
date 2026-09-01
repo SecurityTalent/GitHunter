@@ -1,12 +1,22 @@
 use anyhow::{bail, Context, Result};
-use clap::{Args, Subcommand};
-use rusqlite::{params, OptionalExtension};
+use clap::{Args, CommandFactory, Subcommand};
+use clap_complete::Shell;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf};
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self, BufRead, IsTerminal, Read};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::domain::asset::{asset_type, matches_pattern, normalize, normalize_pattern};
+use crate::domain::asset::{
+    asset_type, classify_and_normalize, extract_matchable_host, matches_pattern, normalize,
+    normalize_pattern, AssetType,
+};
+use crate::domain::tool::{ToolDefinition, WorkflowDefinition};
 use crate::repository::Repository;
 
 #[derive(Debug, Subcommand)]
@@ -17,11 +27,22 @@ pub enum P0Command {
     Target(TargetArgs),
     /// Manage explicit in-scope and out-of-scope rules.
     Scope(ScopeArgs),
-    /// Import and inspect observed assets.
+    /// Ingest, manage, and inspect observed assets.
     Asset(AssetArgs),
+    /// Manage and inspect external security tools.
+    Tool(ToolArgs),
+    /// Manage and run automated tool workflows.
+    Workflow(WorkflowArgs),
+    /// Advisory recommendations based on project state.
+    Recommend,
+    /// Generate shell completion scripts.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     /// Create and inspect immutable security-state snapshots.
     Snapshot(SnapshotArgs),
-    /// Compare the most recent two snapshots.
+    /// Compare security-state snapshots.
     Diff,
     /// Display the current research-state summary.
     Status,
@@ -38,6 +59,7 @@ pub struct ProjectArgs {
 enum ProjectCommand {
     Show,
 }
+
 #[derive(Debug, Args)]
 pub struct TargetArgs {
     #[command(subcommand)]
@@ -52,43 +74,163 @@ enum TargetCommand {
     },
     List,
 }
+
 #[derive(Debug, Args)]
 pub struct ScopeArgs {
     #[command(subcommand)]
     command: ScopeCommand,
 }
 #[derive(Debug, Subcommand)]
-enum ScopeCommand {
+pub enum ScopeCommand {
+    /// Add an in-scope pattern or load rules from a file.
     Add {
-        pattern: String,
+        /// Pattern to add (e.g. *.target.com)
+        pattern: Option<String>,
+        /// Path to scope file with rules (one per line, # comments ignored)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
     },
+    /// Manage out-of-scope rules.
     Out {
         #[command(subcommand)]
         command: ScopeOutCommand,
     },
+    /// List all configured scope rules.
     List,
-    Check {
-        value: String,
-    },
+    /// Test an asset against configured scope rules.
+    Check { value: String },
 }
 #[derive(Debug, Subcommand)]
-enum ScopeOutCommand {
-    Add { pattern: String },
+pub enum ScopeOutCommand {
+    /// Add an out-of-scope pattern or load rules from a file.
+    Add {
+        /// Pattern to exclude (e.g. admin.target.com)
+        pattern: Option<String>,
+        /// Path to out-of-scope file with rules
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
 }
+
 #[derive(Debug, Args)]
 pub struct AssetArgs {
     #[command(subcommand)]
     command: AssetCommand,
 }
 #[derive(Debug, Subcommand)]
-enum AssetCommand {
+pub enum AssetCommand {
+    /// Add a single asset (domain, subdomain, IP, IP:port, URL, endpoint).
+    Add {
+        value: String,
+        #[arg(long, default_value = "manual")]
+        source: String,
+    },
+    /// Import assets from a file or standard input.
     Import {
-        file: PathBuf,
+        /// Path to asset file, or "-" for stdin (reads stdin if omitted and piped)
+        file: Option<PathBuf>,
+        /// Source identifier for provenance (e.g. subfinder, amass, httpx)
         #[arg(long, default_value = "file")]
         source: String,
     },
-    List,
+    /// List tracked assets with optional filtering.
+    List {
+        /// Filter by asset type (DOMAIN, SUBDOMAIN, IP, IP_PORT, URL, ENDPOINT)
+        #[arg(long = "type")]
+        asset_type: Option<String>,
+        /// Filter by scope status (IN_SCOPE, OUT_OF_SCOPE, UNKNOWN)
+        #[arg(long)]
+        scope: Option<String>,
+        /// Filter by observation source
+        #[arg(long)]
+        source: Option<String>,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
+
+#[derive(Debug, Args)]
+pub struct ToolArgs {
+    #[command(subcommand)]
+    command: ToolCommand,
+}
+#[derive(Debug, Subcommand)]
+pub enum ToolCommand {
+    /// List all configured external tools.
+    List,
+    /// Show details of a specific tool.
+    Show { name: String },
+    /// Add or configure an external tool.
+    Add {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        executable: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, value_delimiter = ' ')]
+        args: Vec<String>,
+        #[arg(long, default_value = "target")]
+        input_type: String,
+        #[arg(long, default_value = "lines")]
+        output_type: String,
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        #[arg(long)]
+        timeout: Option<u64>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Remove a configured tool.
+    Remove { name: String },
+    /// Validate tool configuration and check executable availability.
+    Validate { name: String },
+    /// Explicitly execute a tool (opt-in) and optionally ingest output.
+    Run {
+        /// Tool name to run, or "all" to run all enabled tools
+        name: String,
+        /// Override target for the tool
+        #[arg(long)]
+        target: Option<String>,
+        /// Ingest tool stdout directly into GitHunter assets
+        #[arg(long, default_value_t = true)]
+        import: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct WorkflowArgs {
+    #[command(subcommand)]
+    command: WorkflowCommand,
+}
+#[derive(Debug, Subcommand)]
+pub enum WorkflowCommand {
+    /// List all configured workflows.
+    List,
+    /// Show details of a specific workflow.
+    Show { name: String },
+    /// Add a new workflow with ordered tool steps.
+    Add {
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, value_delimiter = ',')]
+        steps: Vec<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Remove a workflow.
+    Remove { name: String },
+    /// Run a workflow deterministically.
+    Run {
+        name: String,
+        #[arg(long)]
+        target: Option<String>,
+    },
+}
+
 #[derive(Debug, Args)]
 pub struct SnapshotArgs {
     #[command(subcommand)]
@@ -104,9 +246,17 @@ enum SnapshotCommand {
 }
 
 pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
+    if let P0Command::Completions { shell } = command {
+        let mut cmd = crate::cli::Cli::command();
+        clap_complete::generate(shell, &mut cmd, "githunter", &mut std::io::stdout());
+        return Ok(());
+    }
+
     let root = path
         .unwrap_or(std::env::current_dir().context("could not determine the current directory")?);
+    let repo_dir = Repository::discover(&root)?;
     let mut db = Repository::open(&root)?;
+
     match command {
         P0Command::Project(args) => match args.command {
             ProjectCommand::Show => project_show(&db),
@@ -119,20 +269,111 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
             TargetCommand::List => target_list(&db),
         },
         P0Command::Scope(args) => match args.command {
-            ScopeCommand::Add { pattern } => scope_add(&mut db, &pattern, "IN_SCOPE"),
+            ScopeCommand::Add { pattern, file } => {
+                scope_add_dispatch(&mut db, pattern.as_deref(), file.as_deref(), "IN_SCOPE")
+            }
             ScopeCommand::Out {
-                command: ScopeOutCommand::Add { pattern },
-            } => scope_add(&mut db, &pattern, "OUT_OF_SCOPE"),
+                command: ScopeOutCommand::Add { pattern, file },
+            } => scope_add_dispatch(&mut db, pattern.as_deref(), file.as_deref(), "OUT_OF_SCOPE"),
             ScopeCommand::List => scope_list(&db),
             ScopeCommand::Check { value } => {
-                println!("{}  {}", scope_status(&db, &value)?, value);
+                let status = scope_status(&db, &value)?;
+                println!("{status:<12} {value}");
                 Ok(())
             }
         },
         P0Command::Asset(args) => match args.command {
-            AssetCommand::Import { file, source } => asset_import(&mut db, &file, &source),
-            AssetCommand::List => asset_list(&db),
+            AssetCommand::Add { value, source } => asset_add(&mut db, &value, &source),
+            AssetCommand::Import { file, source } => {
+                asset_import(&mut db, file.as_deref(), &source)
+            }
+            AssetCommand::List {
+                asset_type,
+                scope,
+                source,
+                json,
+            } => asset_list(
+                &db,
+                asset_type.as_deref(),
+                scope.as_deref(),
+                source.as_deref(),
+                json,
+            ),
         },
+        P0Command::Tool(args) => match args.command {
+            ToolCommand::List => tool_list(&repo_dir, &db),
+            ToolCommand::Show { name } => tool_show(&repo_dir, &db, &name),
+            ToolCommand::Add {
+                name,
+                executable,
+                description,
+                args,
+                input_type,
+                output_type,
+                tags,
+                timeout,
+                file,
+            } => {
+                let tool = if let Some(file_path) = file {
+                    let content = fs::read_to_string(&file_path)?;
+                    toml::from_str::<ToolDefinition>(&content)?
+                } else {
+                    ToolDefinition {
+                        name,
+                        description,
+                        executable,
+                        arguments: args,
+                        input_type,
+                        output_type,
+                        enabled: true,
+                        timeout_seconds: timeout,
+                        tags,
+                    }
+                };
+                tool_add(&repo_dir, &mut db, tool)
+            }
+            ToolCommand::Remove { name } => tool_remove(&repo_dir, &mut db, &name),
+            ToolCommand::Validate { name } => tool_validate(&repo_dir, &db, &name),
+            ToolCommand::Run {
+                name,
+                target,
+                import,
+            } => {
+                if name == "all" {
+                    tool_run_all(&repo_dir, &mut db, target.as_deref(), import)
+                } else {
+                    tool_run(&repo_dir, &mut db, &name, target.as_deref(), import)
+                }
+            }
+        },
+        P0Command::Workflow(args) => match args.command {
+            WorkflowCommand::List => workflow_list(&repo_dir, &db),
+            WorkflowCommand::Show { name } => workflow_show(&repo_dir, &db, &name),
+            WorkflowCommand::Add {
+                name,
+                description,
+                steps,
+                file,
+            } => {
+                let wf = if let Some(file_path) = file {
+                    let content = fs::read_to_string(&file_path)?;
+                    toml::from_str::<WorkflowDefinition>(&content)?
+                } else {
+                    WorkflowDefinition {
+                        name,
+                        description,
+                        steps,
+                    }
+                };
+                workflow_add(&repo_dir, &mut db, wf)
+            }
+            WorkflowCommand::Remove { name } => workflow_remove(&repo_dir, &mut db, &name),
+            WorkflowCommand::Run { name, target } => {
+                workflow_run(&repo_dir, &mut db, &name, target.as_deref())
+            }
+        },
+        P0Command::Recommend => recommend(&repo_dir, &db),
+        P0Command::Completions { .. } => unreachable!(),
         P0Command::Snapshot(args) => match args.command {
             SnapshotCommand::Create { note } => snapshot_create(&mut db, note.as_deref()),
             SnapshotCommand::List => snapshot_list(&db),
@@ -146,7 +387,8 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
 fn now() -> Result<String> {
     Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
 }
-fn event(db: &rusqlite::Connection, kind: &str, entity: &str, id: &str) -> Result<()> {
+
+fn event(db: &Connection, kind: &str, entity: &str, id: &str) -> Result<()> {
     db.execute(
         "INSERT INTO timeline_events VALUES (?1,?2,?3,?4,?5,?6)",
         params![
@@ -160,15 +402,20 @@ fn event(db: &rusqlite::Connection, kind: &str, entity: &str, id: &str) -> Resul
     )?;
     Ok(())
 }
-fn project_show(db: &rusqlite::Connection) -> Result<()> {
+
+fn project_show(db: &Connection) -> Result<()> {
     let (name, id, created): (String, String, String) =
         db.query_row("SELECT name,id,created_at FROM projects LIMIT 1", [], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?))
         })?;
-    println!("Project: {name}\nID: {id}\nCreated: {created}\nSchema: 2");
+    let schema: i64 = db.query_row("SELECT schema_version FROM projects LIMIT 1", [], |r| {
+        r.get(0)
+    })?;
+    println!("Project: {name}\nID: {id}\nCreated: {created}\nSchema: {schema}");
     Ok(())
 }
-fn target_add(db: &mut rusqlite::Connection, value: &str, authorization: &str) -> Result<()> {
+
+fn target_add(db: &mut Connection, value: &str, authorization: &str) -> Result<()> {
     let v = normalize(value)?;
     let id = Uuid::new_v4().to_string();
     db.execute(
@@ -180,7 +427,8 @@ fn target_add(db: &mut rusqlite::Connection, value: &str, authorization: &str) -
     println!("Added target: {v}");
     Ok(())
 }
-fn target_list(db: &rusqlite::Connection) -> Result<()> {
+
+fn target_list(db: &Connection) -> Result<()> {
     let mut s =
         db.prepare("SELECT value,target_type,authorization_note FROM targets ORDER BY value")?;
     let rows = s.query_map([], |r| {
@@ -196,19 +444,101 @@ fn target_list(db: &rusqlite::Connection) -> Result<()> {
     }
     Ok(())
 }
-fn scope_add(db: &mut rusqlite::Connection, pattern: &str, state: &str) -> Result<()> {
-    let p = normalize_pattern(pattern)?;
-    let id = Uuid::new_v4().to_string();
-    db.execute(
-        "INSERT INTO scope_rules VALUES (?1,?2,?3,?4,?5)",
-        params![id, p, state, "project scope", now()?],
-    )
-    .context("scope rule already exists or is invalid")?;
-    event(db, "scope.created", "scope_rule", &id)?;
-    println!("Added {state}: {p}");
+
+fn scope_add_dispatch(
+    db: &mut Connection,
+    pattern: Option<&str>,
+    file: Option<&Path>,
+    state: &str,
+) -> Result<()> {
+    let mut lines_to_process = Vec::new();
+    let mut is_file_source = false;
+
+    if let Some(file_path) = file {
+        let content = fs::read_to_string(file_path)
+            .with_context(|| format!("could not read scope file {}", file_path.display()))?;
+        lines_to_process.extend(content.lines().map(|s| s.to_string()));
+        is_file_source = true;
+    } else if let Some(pat) = pattern {
+        let path = Path::new(pat);
+        if path.is_file() && !pat.starts_with('*') {
+            // Positional file detection fallback
+            let content = fs::read_to_string(path)
+                .with_context(|| format!("could not read scope file {}", path.display()))?;
+            lines_to_process.extend(content.lines().map(|s| s.to_string()));
+            is_file_source = true;
+        } else {
+            lines_to_process.push(pat.to_string());
+        }
+    } else {
+        bail!("scope pattern or --file <PATH> is required");
+    }
+
+    let mut added = 0;
+    let mut duplicates = 0;
+    let mut last_added_pattern = String::new();
+
+    let tx = db.transaction()?;
+    for raw in lines_to_process {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Extract inline comment if any
+        let clean_line = match trimmed.find('#') {
+            Some(pos) => trimmed[..pos].trim(),
+            None => trimmed,
+        };
+        if clean_line.is_empty() {
+            continue;
+        }
+
+        let p = match normalize_pattern(clean_line) {
+            Ok(p) => p,
+            Err(e) => {
+                bail!("invalid scope rule '{clean_line}': {e}");
+            }
+        };
+
+        // Check deduplication at database level
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM scope_rules WHERE pattern=?1 AND state=?2",
+            params![p, state],
+            |r| r.get(0),
+        )?;
+
+        last_added_pattern = p.clone();
+        if count > 0 {
+            duplicates += 1;
+        } else {
+            let id = Uuid::new_v4().to_string();
+            let seen = now()?;
+            tx.execute(
+                "INSERT INTO scope_rules VALUES (?1,?2,?3,?4,?5)",
+                params![id, p, state, "project scope", seen],
+            )?;
+            added += 1;
+        }
+    }
+    tx.commit()?;
+
+    if added > 0 {
+        event(db, "scope.created", "scope_rule", state)?;
+    }
+
+    if is_file_source {
+        println!("Added: {added}");
+        println!("Skipped duplicates: {duplicates}");
+    } else if added > 0 {
+        println!("Added {state}: {last_added_pattern}");
+    } else {
+        println!("Skipped duplicate: {last_added_pattern}");
+    }
+
     Ok(())
 }
-fn scope_list(db: &rusqlite::Connection) -> Result<()> {
+
+fn scope_list(db: &Connection) -> Result<()> {
     let mut s = db.prepare("SELECT state,pattern FROM scope_rules ORDER BY state,pattern")?;
     for row in s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
         let (a, b) = row?;
@@ -216,16 +546,23 @@ fn scope_list(db: &rusqlite::Connection) -> Result<()> {
     }
     Ok(())
 }
-fn scope_status(db: &rusqlite::Connection, value: &str) -> Result<String> {
-    let v = normalize(value)?;
+
+pub fn scope_status(db: &Connection, value: &str) -> Result<String> {
+    let (asset_type, norm_val) = match classify_and_normalize(value) {
+        Ok(res) => res,
+        Err(_) => return Ok("UNKNOWN".into()),
+    };
+    let host_opt = extract_matchable_host(asset_type, &norm_val);
+    let match_target = host_opt.as_deref().unwrap_or(&norm_val);
+
     let mut s = db.prepare("SELECT pattern,state FROM scope_rules")?;
     let rules = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     let mut inside = false;
     for rule in rules {
         let (p, state) = rule?;
-        if matches_pattern(&p, &v) {
+        if matches_pattern(&p, match_target) {
             if state == "OUT_OF_SCOPE" {
-                return Ok(state);
+                return Ok("OUT_OF_SCOPE".into());
             }
             inside = true;
         }
@@ -236,37 +573,133 @@ fn scope_status(db: &rusqlite::Connection, value: &str) -> Result<String> {
         "UNKNOWN".into()
     })
 }
-fn asset_import(db: &mut rusqlite::Connection, file: &PathBuf, source: &str) -> Result<()> {
-    let content =
-        fs::read_to_string(file).with_context(|| format!("could not read {}", file.display()))?;
+
+fn asset_add(db: &mut Connection, value: &str, source: &str) -> Result<()> {
+    let (kind, canonical) = classify_and_normalize(value)
+        .with_context(|| format!("could not parse asset value '{value}'"))?;
+    let seen = now()?;
+    let status = scope_status(db, &canonical)?;
+
+    let existing_id: Option<String> = db
+        .query_row(
+            "SELECT id FROM assets WHERE asset_type=?1 AND normalized_value=?2",
+            params![kind.as_str(), canonical],
+            |r| r.get(0),
+        )
+        .optional()?;
+
+    let (asset_id, is_new) = match existing_id {
+        Some(id) => {
+            db.execute(
+                "UPDATE assets SET last_seen=?1, scope_status=?2 WHERE id=?3",
+                params![seen, status, id],
+            )?;
+            (id, false)
+        }
+        None => {
+            let id = Uuid::new_v4().to_string();
+            db.execute(
+                "INSERT INTO assets VALUES (?1,?2,?3,?4,?5,?5,'{}')",
+                params![id, kind.as_str(), canonical, status, seen],
+            )?;
+            (id, true)
+        }
+    };
+
+    db.execute(
+        "INSERT INTO asset_observations VALUES (?1,?2,?3,?4,?5,'{}')",
+        params![Uuid::new_v4().to_string(), asset_id, value, source, seen],
+    )?;
+
+    event(db, "asset.added", "asset", &asset_id)?;
+
+    if is_new {
+        println!(
+            "Added asset: {canonical} ({}, {status})",
+            kind.display_label()
+        );
+    } else {
+        println!(
+            "Asset already tracked: {canonical} ({}, {status}). Recorded observation from source '{source}'.",
+            kind.display_label()
+        );
+    }
+    Ok(())
+}
+
+fn asset_import(db: &mut Connection, file: Option<&Path>, source: &str) -> Result<()> {
+    if let Some(path) = file {
+        if path == Path::new("-") {
+            let stdin = io::stdin();
+            let reader = stdin.lock();
+            import_assets_from_reader(db, reader, source)?;
+        } else {
+            let f = fs::File::open(path)
+                .with_context(|| format!("could not open asset file {}", path.display()))?;
+            let reader = io::BufReader::new(f);
+            import_assets_from_reader(db, reader, source)?;
+        }
+    } else {
+        let stdin = io::stdin();
+        if stdin.is_terminal() {
+            bail!("missing asset input file or piped stdin. Use `githunter asset import <file>` or pipe data via stdin.");
+        }
+        let reader = stdin.lock();
+        import_assets_from_reader(db, reader, source)?;
+    }
+    Ok(())
+}
+
+pub fn import_assets_from_reader<R: BufRead>(
+    db: &mut Connection,
+    reader: R,
+    source: &str,
+) -> Result<()> {
     let tx = db.transaction()?;
     let mut added = 0;
     let mut existing = 0;
     let mut invalid = 0;
-    for raw in content.lines().map(str::trim).filter(|v| !v.is_empty()) {
-        let value = match normalize(raw) {
+
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    let mut scope_counts: HashMap<String, usize> = HashMap::new();
+
+    for line_res in reader.lines() {
+        let raw = line_res?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let (kind, canonical) = match classify_and_normalize(trimmed) {
             Ok(v) => v,
             Err(_) => {
                 invalid += 1;
                 continue;
             }
         };
-        let kind = asset_type(&value);
+
+        let kind_str = kind.as_str().to_string();
+        let display_type = kind.display_label().to_string();
         let seen = now()?;
-        let status = scope_status(&tx, &value)?;
+        let status = scope_status(&tx, &canonical)?;
+
+        *type_counts.entry(display_type).or_insert(0) += 1;
+        *scope_counts.entry(status.clone()).or_insert(0) += 1;
+
         let id: Option<String> = tx
             .query_row(
                 "SELECT id FROM assets WHERE asset_type=?1 AND normalized_value=?2",
-                params![kind, value],
+                params![kind_str, canonical],
                 |r| r.get(0),
             )
             .optional()?;
+
         let asset_id = match id {
             Some(id) => {
                 existing += 1;
                 tx.execute(
-                    "UPDATE assets SET last_seen=?1 WHERE id=?2",
-                    params![seen, id],
+                    "UPDATE assets SET last_seen=?1, scope_status=?2 WHERE id=?3",
+                    params![seen, status, id],
                 )?;
                 id
             }
@@ -275,36 +708,537 @@ fn asset_import(db: &mut rusqlite::Connection, file: &PathBuf, source: &str) -> 
                 let id = Uuid::new_v4().to_string();
                 tx.execute(
                     "INSERT INTO assets VALUES (?1,?2,?3,?4,?5,?5,'{}')",
-                    params![id, kind, value, status, seen],
+                    params![id, kind_str, canonical, status, seen],
                 )?;
                 id
             }
         };
+
         tx.execute(
             "INSERT INTO asset_observations VALUES (?1,?2,?3,?4,?5,'{}')",
-            params![Uuid::new_v4().to_string(), asset_id, raw, source, seen],
+            params![Uuid::new_v4().to_string(), asset_id, trimmed, source, seen],
         )?;
     }
+
     tx.commit()?;
-    event(db, "assets.imported", "asset_import", source)?;
-    println!("Imported assets. New: {added}, existing: {existing}, invalid: {invalid}");
+
+    if added > 0 || existing > 0 {
+        event(db, "assets.imported", "asset_import", source)?;
+    }
+
+    let total = added + existing;
+    println!("Imported: {total}");
+    println!("New assets: {added}");
+    println!("Duplicates: {existing}");
+    if invalid > 0 {
+        println!("Invalid lines: {invalid}");
+    }
+    println!();
+    println!("Types:");
+    for t in [
+        "DOMAIN",
+        "SUBDOMAIN",
+        "IP",
+        "IP_PORT",
+        "URL",
+        "ENDPOINT",
+        "UNKNOWN",
+    ] {
+        if let Some(count) = type_counts.get(t) {
+            println!("  {t:<10} {count}");
+        }
+    }
+    println!();
+    println!("Scope:");
+    for s in ["IN_SCOPE", "OUT_OF_SCOPE", "UNKNOWN"] {
+        let count = scope_counts.get(s).copied().unwrap_or(0);
+        println!("  {s:<12} {count}");
+    }
+
     Ok(())
 }
-fn asset_list(db: &rusqlite::Connection) -> Result<()> {
-    let mut s=db.prepare("SELECT scope_status,asset_type,normalized_value FROM assets ORDER BY asset_type,normalized_value")?;
-    for row in s.query_map([], |r| {
+
+fn asset_list(
+    db: &Connection,
+    type_filter: Option<&str>,
+    scope_filter: Option<&str>,
+    source_filter: Option<&str>,
+    json_output: bool,
+) -> Result<()> {
+    let mut query = String::from(
+        "SELECT a.id, a.asset_type, a.normalized_value, a.scope_status, a.first_seen, a.last_seen,
+                GROUP_CONCAT(DISTINCT o.source) AS sources
+         FROM assets a
+         LEFT JOIN asset_observations o ON a.id = o.asset_id
+         WHERE 1=1 ",
+    );
+
+    let mut param_values: Vec<String> = Vec::new();
+
+    if let Some(t) = type_filter {
+        let norm_t = AssetType::parse(t)
+            .map(|k| k.as_str().to_string())
+            .unwrap_or_else(|| t.to_ascii_lowercase());
+        query.push_str("AND a.asset_type = ? ");
+        param_values.push(norm_t);
+    }
+
+    if let Some(s) = scope_filter {
+        query.push_str("AND a.scope_status = ? ");
+        param_values.push(s.to_ascii_uppercase());
+    }
+
+    query.push_str("GROUP BY a.id ");
+
+    if let Some(src) = source_filter {
+        query.push_str("HAVING sources LIKE ? ");
+        param_values.push(format!("%{src}%"));
+    }
+
+    query.push_str("ORDER BY a.asset_type, a.normalized_value");
+
+    let mut stmt = db.prepare(&query)?;
+    let params_ref: Vec<&dyn rusqlite::ToSql> = param_values
+        .iter()
+        .map(|v| v as &dyn rusqlite::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params_ref.as_slice(), |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, Option<String>>(6)?.unwrap_or_default(),
         ))
-    })? {
-        let (a, b, c) = row?;
-        println!("{a:<12} {b:<6} {c}");
+    })?;
+
+    if json_output {
+        let mut list = Vec::new();
+        for row in rows {
+            let (id, kind, val, scope, first_seen, last_seen, sources_str) = row?;
+            let sources: Vec<&str> = sources_str.split(',').filter(|s| !s.is_empty()).collect();
+            list.push(json!({
+                "id": id,
+                "type": kind,
+                "value": val,
+                "scope": scope,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "sources": sources
+            }));
+        }
+        println!("{}", serde_json::to_string_pretty(&list)?);
+    } else {
+        println!(
+            "{:<12} {:<10} {:<36} {:<20} {:<24}",
+            "SCOPE", "TYPE", "VALUE", "SOURCES", "LAST SEEN"
+        );
+        println!("{}", "-".repeat(105));
+        for row in rows {
+            let (_, kind, val, scope, _, last_seen, sources) = row?;
+            println!("{scope:<12} {kind:<10} {val:<36} {sources:<20} {last_seen:<24}");
+        }
     }
     Ok(())
 }
-fn snapshot_create(db: &mut rusqlite::Connection, note: Option<&str>) -> Result<()> {
+
+fn tool_list(repo_dir: &Path, _db: &Connection) -> Result<()> {
+    let tools = Repository::load_tool_files(repo_dir)?;
+    if tools.is_empty() {
+        println!("No external tools configured.");
+        println!("Add tools with `githunter tool add --name <name> --executable <bin>`");
+        return Ok(());
+    }
+
+    println!(
+        "{:<16} {:<8} {:<28} {:<30}",
+        "NAME", "ENABLED", "TAGS / CATEGORY", "DESCRIPTION"
+    );
+    println!("{}", "-".repeat(84));
+    for tool in tools {
+        let enabled_str = if tool.enabled { "yes" } else { "no" };
+        let tags_str = tool.tags.join(", ");
+        println!(
+            "{:<16} {:<8} {:<28} {:<30}",
+            tool.name, enabled_str, tags_str, tool.description
+        );
+    }
+    Ok(())
+}
+
+fn tool_show(repo_dir: &Path, _db: &Connection, name: &str) -> Result<()> {
+    let tools = Repository::load_tool_files(repo_dir)?;
+    let tool = tools
+        .into_iter()
+        .find(|t| t.name == name)
+        .with_context(|| format!("tool '{name}' not found"))?;
+
+    println!("Tool: {}", tool.name);
+    println!("Description: {}", tool.description);
+    println!("Executable: {}", tool.executable);
+    println!("Arguments: {:?}", tool.arguments);
+    println!("Input Type: {}", tool.input_type);
+    println!("Output Type: {}", tool.output_type);
+    println!("Enabled: {}", tool.enabled);
+    if let Some(timeout) = tool.timeout_seconds {
+        println!("Timeout: {timeout}s");
+    }
+    println!("Tags: {:?}", tool.tags);
+    Ok(())
+}
+
+fn tool_add(repo_dir: &Path, db: &mut Connection, tool: ToolDefinition) -> Result<()> {
+    tool.validate()?;
+    Repository::save_tool_file(repo_dir, &tool)?;
+
+    let seen = now()?;
+    let args_json = serde_json::to_string(&tool.arguments)?;
+    let tags_json = serde_json::to_string(&tool.tags)?;
+
+    db.execute(
+        "INSERT INTO tools (name, description, executable, arguments_json, input_type, output_type, enabled, timeout_seconds, tags_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+         ON CONFLICT(name) DO UPDATE SET
+           description=excluded.description, executable=excluded.executable,
+           arguments_json=excluded.arguments_json, input_type=excluded.input_type,
+           output_type=excluded.output_type, enabled=excluded.enabled,
+           timeout_seconds=excluded.timeout_seconds, tags_json=excluded.tags_json,
+           updated_at=excluded.updated_at",
+        params![
+            tool.name,
+            tool.description,
+            tool.executable,
+            args_json,
+            tool.input_type,
+            tool.output_type,
+            tool.enabled as i32,
+            tool.timeout_seconds,
+            tags_json,
+            seen,
+        ],
+    )?;
+
+    event(db, "tool.configured", "tool", &tool.name)?;
+    println!("Configured tool: {}", tool.name);
+    Ok(())
+}
+
+fn tool_remove(repo_dir: &Path, db: &mut Connection, name: &str) -> Result<()> {
+    Repository::remove_tool_file(repo_dir, name)?;
+    db.execute("DELETE FROM tools WHERE name=?1", [name])?;
+    event(db, "tool.removed", "tool", name)?;
+    println!("Removed tool: {name}");
+    Ok(())
+}
+
+fn tool_validate(repo_dir: &Path, _db: &Connection, name: &str) -> Result<()> {
+    let tools = Repository::load_tool_files(repo_dir)?;
+    let tool = tools
+        .into_iter()
+        .find(|t| t.name == name)
+        .with_context(|| format!("tool '{name}' not found"))?;
+
+    println!("Validating tool: {name}");
+    match tool.validate() {
+        Ok(_) => println!("  ✓ Configuration syntax valid"),
+        Err(e) => println!("  ✗ Configuration error: {e}"),
+    }
+
+    if check_executable_exists(&tool.executable) {
+        println!("  ✓ Executable found: {}", tool.executable);
+    } else {
+        println!(
+            "  ✗ Executable not found in PATH or disk: {}",
+            tool.executable
+        );
+    }
+
+    println!("  ✓ Input type: {}", tool.input_type);
+    println!("  ✓ Output type: {}", tool.output_type);
+    Ok(())
+}
+
+fn check_executable_exists(executable: &str) -> bool {
+    let path = Path::new(executable);
+    if path.is_file() {
+        return true;
+    }
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let full_path = dir.join(executable);
+            if full_path.is_file() {
+                return true;
+            }
+            #[cfg(windows)]
+            {
+                let exe_path = dir.join(format!("{executable}.exe"));
+                if exe_path.is_file() {
+                    return true;
+                }
+                let cmd_path = dir.join(format!("{executable}.cmd"));
+                if cmd_path.is_file() {
+                    return true;
+                }
+                let bat_path = dir.join(format!("{executable}.bat"));
+                if bat_path.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn tool_run(
+    repo_dir: &Path,
+    db: &mut Connection,
+    name: &str,
+    target_override: Option<&str>,
+    import_output: bool,
+) -> Result<()> {
+    let tools = Repository::load_tool_files(repo_dir)?;
+    let tool = tools
+        .into_iter()
+        .find(|t| t.name == name)
+        .with_context(|| format!("tool '{name}' not found"))?;
+
+    if !tool.enabled {
+        bail!("tool '{name}' is currently disabled");
+    }
+
+    let target_val = if let Some(t) = target_override {
+        t.to_string()
+    } else {
+        let t_opt: Option<String> = db
+            .query_row("SELECT value FROM targets LIMIT 1", [], |r| r.get(0))
+            .optional()?;
+        t_opt.with_context(|| "no target found. Add a target with `githunter target add <target>` or specify `--target <target>`")?
+    };
+
+    let scope_patterns: Vec<String> = {
+        let mut stmt = db.prepare("SELECT pattern FROM scope_rules WHERE state='IN_SCOPE'")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+
+    let resolved_args = tool.resolve_arguments(&target_val, &scope_patterns);
+
+    println!(
+        "⚡ [Opt-In Execution] Running '{}' with target '{}'...",
+        tool.name, target_val
+    );
+
+    let mut cmd = std::process::Command::new(&tool.executable);
+    cmd.args(&resolved_args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "failed to start executable '{}'. Ensure it is installed and in PATH.",
+            tool.executable
+        )
+    })?;
+
+    let mut stdout_bytes = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        out.read_to_end(&mut stdout_bytes)?;
+    }
+
+    let mut stderr_bytes = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        err.read_to_end(&mut stderr_bytes)?;
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        let err_msg = String::from_utf8_lossy(&stderr_bytes);
+        eprintln!("Tool execution exited with status {status}. Stderr:\n{err_msg}");
+    }
+
+    event(db, "tool.executed", "tool", &tool.name)?;
+
+    if import_output && !stdout_bytes.is_empty() {
+        println!();
+        println!("📥 Ingesting tool output into GitHunter asset pipeline...");
+        import_assets_from_reader(db, std::io::Cursor::new(stdout_bytes), &tool.name)?;
+    }
+
+    Ok(())
+}
+
+fn tool_run_all(
+    repo_dir: &Path,
+    db: &mut Connection,
+    target_override: Option<&str>,
+    import_output: bool,
+) -> Result<()> {
+    let tools = Repository::load_tool_files(repo_dir)?;
+    let enabled_tools: Vec<_> = tools.into_iter().filter(|t| t.enabled).collect();
+    if enabled_tools.is_empty() {
+        println!("No enabled tools found to execute.");
+        return Ok(());
+    }
+
+    println!("Running {} configured tools...", enabled_tools.len());
+    for tool in enabled_tools {
+        tool_run(repo_dir, db, &tool.name, target_override, import_output)?;
+        println!("{}", "=".repeat(60));
+    }
+    Ok(())
+}
+
+fn workflow_list(repo_dir: &Path, _db: &Connection) -> Result<()> {
+    let workflows = Repository::load_workflow_files(repo_dir)?;
+    if workflows.is_empty() {
+        println!("No workflows configured.");
+        println!("Add workflows with `githunter workflow add --name <name> --steps <step1,step2>`");
+        return Ok(());
+    }
+
+    println!("{:<20} {:<30} {:<30}", "WORKFLOW", "STEPS", "DESCRIPTION");
+    println!("{}", "-".repeat(80));
+    for wf in workflows {
+        let steps_str = wf.steps.join(" -> ");
+        println!("{:<20} {:<30} {:<30}", wf.name, steps_str, wf.description);
+    }
+    Ok(())
+}
+
+fn workflow_show(repo_dir: &Path, _db: &Connection, name: &str) -> Result<()> {
+    let workflows = Repository::load_workflow_files(repo_dir)?;
+    let wf = workflows
+        .into_iter()
+        .find(|w| w.name == name)
+        .with_context(|| format!("workflow '{name}' not found"))?;
+
+    println!("Workflow: {}", wf.name);
+    println!("Description: {}", wf.description);
+    println!("Steps: {:?}", wf.steps);
+    Ok(())
+}
+
+fn workflow_add(repo_dir: &Path, db: &mut Connection, wf: WorkflowDefinition) -> Result<()> {
+    wf.validate()?;
+    Repository::save_workflow_file(repo_dir, &wf)?;
+
+    let seen = now()?;
+    let steps_json = serde_json::to_string(&wf.steps)?;
+
+    db.execute(
+        "INSERT INTO tool_workflows (name, description, steps_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(name) DO UPDATE SET
+           description=excluded.description, steps_json=excluded.steps_json, updated_at=excluded.updated_at",
+        params![wf.name, wf.description, steps_json, seen],
+    )?;
+
+    event(db, "workflow.configured", "workflow", &wf.name)?;
+    println!("Configured workflow: {}", wf.name);
+    Ok(())
+}
+
+fn workflow_remove(repo_dir: &Path, db: &mut Connection, name: &str) -> Result<()> {
+    Repository::remove_workflow_file(repo_dir, name)?;
+    db.execute("DELETE FROM tool_workflows WHERE name=?1", [name])?;
+    event(db, "workflow.removed", "workflow", name)?;
+    println!("Removed workflow: {name}");
+    Ok(())
+}
+
+fn workflow_run(
+    repo_dir: &Path,
+    db: &mut Connection,
+    name: &str,
+    target_override: Option<&str>,
+) -> Result<()> {
+    let workflows = Repository::load_workflow_files(repo_dir)?;
+    let wf = workflows
+        .into_iter()
+        .find(|w| w.name == name)
+        .with_context(|| format!("workflow '{name}' not found"))?;
+
+    println!(
+        "🚀 Executing workflow '{}' ({} steps)...",
+        wf.name,
+        wf.steps.len()
+    );
+    for (idx, step) in wf.steps.iter().enumerate() {
+        println!("\n--- Step {}: Running tool '{}' ---", idx + 1, step);
+        tool_run(repo_dir, db, step, target_override, true)?;
+    }
+    println!("\n✨ Workflow '{}' completed successfully!", wf.name);
+    Ok(())
+}
+
+fn recommend(repo_dir: &Path, db: &Connection) -> Result<()> {
+    let project: String = db
+        .query_row("SELECT name FROM projects LIMIT 1", [], |r| r.get(0))
+        .unwrap_or_else(|_| "Unknown".into());
+    let target_count: i64 = db.query_row("SELECT COUNT(*) FROM targets", [], |r| r.get(0))?;
+    let scope_count: i64 = db.query_row("SELECT COUNT(*) FROM scope_rules", [], |r| r.get(0))?;
+    let asset_count: i64 = db.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))?;
+    let snapshot_count: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
+    let tools = Repository::load_tool_files(repo_dir)?;
+
+    println!("🎯 GITHUNTER RESEARCH RECOMMENDATIONS");
+    println!("========================================");
+    println!("Project: {project}");
+    println!();
+    println!("Current Research State:");
+    println!("  • Targets:          {target_count}");
+    println!("  • Scope Rules:      {scope_count}");
+    println!("  • Tracked Assets:   {asset_count}");
+    println!("  • Snapshots:        {snapshot_count}");
+    println!("  • Configured Tools: {}", tools.len());
+    println!();
+    println!("Advisory Next Steps:");
+
+    let mut step = 1;
+    if target_count == 0 {
+        println!("  {step}. Register primary authorized target: `githunter target add <domain>`");
+        step += 1;
+    }
+    if scope_count == 0 {
+        println!(
+            "  {step}. Define In-Scope rules: `githunter scope add \"*.<domain>\"` or `githunter scope add --file scope.txt`"
+        );
+        step += 1;
+    }
+    if asset_count == 0 {
+        println!(
+            "  {step}. Ingest initial recon assets: `githunter asset import assets.txt --source <tool>` or cat assets.txt | `githunter asset import`"
+        );
+        step += 1;
+    }
+    if asset_count > 0 && snapshot_count == 0 {
+        println!(
+            "  {step}. Capture baseline research state: `githunter snapshot create --note \"Initial baseline\"`"
+        );
+        step += 1;
+    }
+    if tools.is_empty() {
+        println!(
+            "  {step}. Configure passive discovery tools: `githunter tool add --name subfinder --executable subfinder --args \"-d {{target}} -silent\"`"
+        );
+        step += 1;
+    } else if asset_count > 0 && snapshot_count > 0 {
+        println!(
+            "  {step}. Run configured recon tools: `githunter tool run <name>` or `githunter tool run all`"
+        );
+        step += 1;
+        println!("  {step}. Compare changes against baseline: `githunter diff`");
+    }
+    let _ = step;
+    println!();
+    println!("* Note: GitHunter is local-first. Tool executions and recommendations are strictly advisory and require explicit opt-in.");
+    Ok(())
+}
+
+fn snapshot_create(db: &mut Connection, note: Option<&str>) -> Result<()> {
     let assets: Vec<(String, String, String, String)> = {
         let mut statement = db.prepare(
             "SELECT id,asset_type,normalized_value,scope_status FROM assets ORDER BY asset_type,normalized_value",
@@ -338,8 +1272,11 @@ fn snapshot_create(db: &mut rusqlite::Connection, note: Option<&str>) -> Result<
     println!("Created snapshot: {display}");
     Ok(())
 }
-fn snapshot_list(db: &rusqlite::Connection) -> Result<()> {
-    let mut s=db.prepare("SELECT display_id,created_at,asset_count,COALESCE(note,'') FROM snapshots ORDER BY created_at")?;
+
+fn snapshot_list(db: &Connection) -> Result<()> {
+    let mut s = db.prepare(
+        "SELECT display_id,created_at,asset_count,COALESCE(note,'') FROM snapshots ORDER BY created_at",
+    )?;
     for row in s.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -353,7 +1290,8 @@ fn snapshot_list(db: &rusqlite::Connection) -> Result<()> {
     }
     Ok(())
 }
-fn diff(db: &rusqlite::Connection) -> Result<()> {
+
+fn diff(db: &Connection) -> Result<()> {
     let mut s =
         db.prepare("SELECT id,display_id FROM snapshots ORDER BY created_at DESC LIMIT 2")?;
     let snaps: Vec<(String, String)> = s
@@ -363,7 +1301,11 @@ fn diff(db: &rusqlite::Connection) -> Result<()> {
         bail!("two snapshots are required for a diff");
     }
     let count = |id: &str| -> Result<i64> {
-        Ok(db.query_row("SELECT COUNT(*) FROM snapshot_assets WHERE snapshot_id=?1 AND asset_id NOT IN (SELECT asset_id FROM snapshot_assets WHERE snapshot_id=?2)",params![id,snaps[1].0],|r|r.get(0))?)
+        Ok(db.query_row(
+            "SELECT COUNT(*) FROM snapshot_assets WHERE snapshot_id=?1 AND asset_id NOT IN (SELECT asset_id FROM snapshot_assets WHERE snapshot_id=?2)",
+            params![id, snaps[1].0],
+            |r| r.get(0),
+        )?)
     };
     let added = count(&snaps[0].0)?;
     let removed: i64 = db.query_row(
@@ -377,14 +1319,16 @@ fn diff(db: &rusqlite::Connection) -> Result<()> {
     );
     Ok(())
 }
-fn status(db: &rusqlite::Connection) -> Result<()> {
+
+fn status(db: &Connection) -> Result<()> {
     let project: String = db.query_row("SELECT name FROM projects LIMIT 1", [], |r| r.get(0))?;
     let assets: i64 = db.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))?;
     let snapshots: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
     println!("GITHUNTER STATUS\n\nProject: {project}\nAssets: {assets}\nSnapshots: {snapshots}");
     Ok(())
 }
-fn timeline(db: &rusqlite::Connection) -> Result<()> {
+
+fn timeline(db: &Connection) -> Result<()> {
     let mut s = db.prepare(
         "SELECT occurred_at,event_type,entity_type FROM timeline_events ORDER BY occurred_at",
     )?;

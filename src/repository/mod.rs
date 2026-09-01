@@ -8,6 +8,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::database;
+use crate::domain::tool::{ToolDefinition, WorkflowDefinition};
 
 const GITHUNTER_DIRECTORY: &str = ".githunter";
 
@@ -56,7 +57,14 @@ impl Repository {
     }
 
     fn initialize_contents(githunter_dir: &Path, project_name: &str) -> Result<()> {
-        for directory in ["objects/sha256", "locks", "backups", "metadata"] {
+        for directory in [
+            "objects/sha256",
+            "locks",
+            "backups",
+            "metadata",
+            "tools",
+            "workflows",
+        ] {
             fs::create_dir_all(githunter_dir.join(directory))?;
         }
         let project_id = Uuid::new_v4().to_string();
@@ -108,14 +116,103 @@ impl Repository {
 
     pub fn open(start: &Path) -> Result<Connection> {
         let githunter_dir = Self::discover(start)?;
-        let connection = Connection::open(githunter_dir.join("githunter.db"))?;
+        let mut connection = Connection::open(githunter_dir.join("githunter.db"))?;
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        let now = unix_timestamp()?;
+        database::migrate(&mut connection, &now)?;
         Ok(connection)
+    }
+
+    pub fn tools_dir(gitgithunter_dir: &Path) -> PathBuf {
+        let dir = gitgithunter_dir.join("tools");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    pub fn workflows_dir(gitgithunter_dir: &Path) -> PathBuf {
+        let dir = gitgithunter_dir.join("workflows");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    pub fn save_tool_file(gitgithunter_dir: &Path, tool: &ToolDefinition) -> Result<()> {
+        let dir = Self::tools_dir(gitgithunter_dir);
+        let path = dir.join(format!("{}.toml", tool.name));
+        let content = toml::to_string_pretty(tool)?;
+        fs::write(path, content)?;
+        Ok(())
+    }
+
+    pub fn load_tool_files(gitgithunter_dir: &Path) -> Result<Vec<ToolDefinition>> {
+        let dir = Self::tools_dir(gitgithunter_dir);
+        let mut tools = Vec::new();
+        if dir.is_dir() {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                    let content = fs::read_to_string(&path)?;
+                    if let Ok(tool) = toml::from_str::<ToolDefinition>(&content) {
+                        tools.push(tool);
+                    }
+                }
+            }
+        }
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(tools)
+    }
+
+    pub fn remove_tool_file(gitgithunter_dir: &Path, name: &str) -> Result<()> {
+        let dir = Self::tools_dir(gitgithunter_dir);
+        let path = dir.join(format!("{name}.toml"));
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn save_workflow_file(
+        gitgithunter_dir: &Path,
+        workflow: &WorkflowDefinition,
+    ) -> Result<()> {
+        let dir = Self::workflows_dir(gitgithunter_dir);
+        let path = dir.join(format!("{}.toml", workflow.name));
+        let content = toml::to_string_pretty(workflow)?;
+        fs::write(path, content)?;
+        Ok(())
+    }
+
+    pub fn load_workflow_files(gitgithunter_dir: &Path) -> Result<Vec<WorkflowDefinition>> {
+        let dir = Self::workflows_dir(gitgithunter_dir);
+        let mut workflows = Vec::new();
+        if dir.is_dir() {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                    let content = fs::read_to_string(&path)?;
+                    if let Ok(wf) = toml::from_str::<WorkflowDefinition>(&content) {
+                        workflows.push(wf);
+                    }
+                }
+            }
+        }
+        workflows.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(workflows)
+    }
+
+    pub fn remove_workflow_file(gitgithunter_dir: &Path, name: &str) -> Result<()> {
+        let dir = Self::workflows_dir(gitgithunter_dir);
+        let path = dir.join(format!("{name}.toml"));
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
     }
 }
 
-fn unix_timestamp() -> Result<String> {
+pub fn unix_timestamp() -> Result<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .context("could not format the current timestamp")

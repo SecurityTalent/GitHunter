@@ -31,7 +31,7 @@ fn tracks_authorized_assets_and_snapshot_changes() {
         .args(["asset", "import", "assets.txt", "--source", "manual"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("New: 2"));
+        .stdout(predicates::str::contains("New assets: 2"));
     githunter()
         .current_dir(directory.path())
         .args(["snapshot", "create", "--note", "baseline"])

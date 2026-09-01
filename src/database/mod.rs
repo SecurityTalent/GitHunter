@@ -53,13 +53,33 @@ CREATE TABLE snapshot_assets (
   snapshot_id TEXT NOT NULL REFERENCES snapshots(id), asset_id TEXT NOT NULL REFERENCES assets(id),
   asset_hash TEXT NOT NULL, PRIMARY KEY(snapshot_id, asset_id)
 );
+CREATE TABLE tools (
+  name TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  executable TEXT NOT NULL,
+  arguments_json TEXT NOT NULL DEFAULT '[]',
+  input_type TEXT NOT NULL DEFAULT 'target',
+  output_type TEXT NOT NULL DEFAULT 'lines',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  timeout_seconds INTEGER,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE tool_workflows (
+  name TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX assets_scope_status ON assets(scope_status);
 CREATE INDEX assets_last_seen ON assets(last_seen);
 CREATE INDEX observations_asset_observed ON asset_observations(asset_id, observed_at);
 CREATE INDEX snapshot_assets_asset ON snapshot_assets(asset_id);
 "#;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn initialize(path: &Path, project_id: &str, project_name: &str, now: &str) -> Result<()> {
     let connection = Connection::open(path)
@@ -78,5 +98,53 @@ pub fn initialize(path: &Path, project_id: &str, project_name: &str, now: &str) 
         (project_id, project_name, SCHEMA_VERSION, now),
     )?;
     transaction.commit()?;
+    Ok(())
+}
+
+pub fn migrate(connection: &mut Connection, now: &str) -> Result<()> {
+    let current_version: i64 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    if current_version < 3 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS tools (
+              name TEXT PRIMARY KEY,
+              description TEXT NOT NULL,
+              executable TEXT NOT NULL,
+              arguments_json TEXT NOT NULL DEFAULT '[]',
+              input_type TEXT NOT NULL DEFAULT 'target',
+              output_type TEXT NOT NULL DEFAULT 'lines',
+              enabled INTEGER NOT NULL DEFAULT 1,
+              timeout_seconds INTEGER,
+              tags_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tool_workflows (
+              name TEXT PRIMARY KEY,
+              description TEXT NOT NULL,
+              steps_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            "#,
+        )?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?1)",
+            [now],
+        )?;
+        tx.execute(
+            "UPDATE projects SET schema_version = 3, updated_at = ?1",
+            [now],
+        )?;
+        tx.commit()?;
+    }
     Ok(())
 }
