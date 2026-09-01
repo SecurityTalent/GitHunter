@@ -289,6 +289,11 @@ enum SnapshotCommand {
         note: Option<String>,
     },
     List,
+    /// Create an immutable union of two snapshots; the second snapshot wins asset-state ties.
+    Merge {
+        snapshot1: String,
+        snapshot2: String,
+    },
 }
 
 pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
@@ -456,6 +461,10 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
         P0Command::Snapshot(args) => match args.command {
             SnapshotCommand::Create { note } => snapshot_create(&mut db, note.as_deref()),
             SnapshotCommand::List => snapshot_list(&db),
+            SnapshotCommand::Merge {
+                snapshot1,
+                snapshot2,
+            } => snapshot_merge(&mut db, &snapshot1, &snapshot2),
         },
         P0Command::Diff => diff(&db),
         P0Command::Status => status(&db),
@@ -1631,6 +1640,80 @@ fn snapshot_list(db: &Connection) -> Result<()> {
         let (a, b, c, d) = row?;
         println!("{a}  {b}  assets: {c}  {d}");
     }
+    Ok(())
+}
+
+/// Creates a new immutable snapshot from the union of two existing snapshots.
+/// If an asset has a distinct historic hash in both parents, the second argument
+/// is authoritative, mirroring a conventional `base -> updated` merge flow.
+fn snapshot_merge(db: &mut Connection, first: &str, second: &str) -> Result<()> {
+    if first == second {
+        bail!("snapshot merge requires two different snapshots");
+    }
+
+    let find_snapshot = |display_id: &str| -> Result<(String, String)> {
+        db.query_row(
+            "SELECT id,display_id FROM snapshots WHERE display_id=?1",
+            [display_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .with_context(|| {
+            format!("snapshot '{display_id}' not found; use `githunter snapshot list`")
+        })
+    };
+    let (first_id, first_display) = find_snapshot(first)?;
+    let (second_id, second_display) = find_snapshot(second)?;
+
+    let mut merged_assets: HashMap<String, String> = HashMap::new();
+    for parent_id in [&first_id, &second_id] {
+        let mut statement =
+            db.prepare("SELECT asset_id,asset_hash FROM snapshot_assets WHERE snapshot_id=?1")?;
+        for row in statement.query_map([parent_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })? {
+            let (asset_id, asset_hash) = row?;
+            // Iterating the second parent last intentionally resolves state ties.
+            merged_assets.insert(asset_id, asset_hash);
+        }
+    }
+    let mut assets: Vec<(String, String)> = merged_assets.into_iter().collect();
+    assets.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut parents = vec![first_id, second_id];
+    parents.sort();
+    let manifest = serde_json::to_vec(&json!({
+        "kind": "snapshot_merge",
+        "parents": parents,
+        "assets": assets,
+    }))?;
+    let manifest_hash = format!("{:x}", Sha256::digest(&manifest));
+    let sequence: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
+    let id = Uuid::new_v4().to_string();
+    let display = format!("s_{:04}", sequence + 1);
+    let note = format!("merge of {first_display} and {second_display}");
+    let timestamp = now()?;
+    let transaction = db.transaction()?;
+    transaction.execute(
+        "INSERT INTO snapshots VALUES (?1,?2,?3,?4,?5,?6)",
+        params![
+            id,
+            display,
+            manifest_hash,
+            timestamp,
+            assets.len() as i64,
+            note
+        ],
+    )?;
+    for (asset_id, asset_hash) in assets {
+        transaction.execute(
+            "INSERT INTO snapshot_assets VALUES (?1,?2,?3)",
+            params![id, asset_id, asset_hash],
+        )?;
+    }
+    transaction.commit()?;
+    event(db, "snapshot.merged", "snapshot", &id)?;
+    println!("Merged snapshots {first_display} + {second_display}: {display}");
     Ok(())
 }
 

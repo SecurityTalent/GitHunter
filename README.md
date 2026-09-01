@@ -384,6 +384,17 @@ githunter timeline
 
 Snapshots track every supported asset type. Repeated observations update provenance and `last_seen` without creating duplicate canonical assets.
 
+To combine the asset records from two existing snapshots without modifying
+either source snapshot, create an immutable merge snapshot:
+
+```bash
+githunter snapshot merge s_0001 s_0002
+```
+
+The result contains the union of both snapshots. If the same asset has a
+different historic state in both, the second snapshot argument takes priority.
+Use `githunter snapshot list` to find snapshot IDs.
+
 ## Live dashboard
 
 Open a second terminal in the project directory and run:
@@ -420,6 +431,7 @@ refresh, or `--once` to print one dashboard frame for a script.
 | `githunter workflow add --name <name> --steps <tools>` | Save an ordered workflow. |
 | `githunter workflow run <name>` | Explicitly run a saved workflow. |
 | `githunter snapshot create` | Create an immutable snapshot. |
+| `githunter snapshot merge <snapshot1> <snapshot2>` | Create an immutable union of two snapshots. |
 | `githunter diff` | Compare the latest two snapshots. |
 | `githunter status` | Show the project name and current totals for tracked assets and snapshots. |
 | `githunter timeline` | Show the local audit timeline. |

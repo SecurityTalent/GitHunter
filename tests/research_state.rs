@@ -56,4 +56,22 @@ fn tracks_authorized_assets_and_snapshot_changes() {
         .assert()
         .success()
         .stdout(predicates::str::contains("Added: 1"));
+
+    githunter()
+        .current_dir(directory.path())
+        .args(["snapshot", "merge", "s_0001", "s_0002"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "Merged snapshots s_0001 + s_0002: s_0003",
+        ));
+    githunter()
+        .current_dir(directory.path())
+        .args(["snapshot", "list"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("s_0001"))
+        .stdout(predicates::str::contains("s_0002"))
+        .stdout(predicates::str::contains("s_0003"))
+        .stdout(predicates::str::contains("assets: 3"));
 }
