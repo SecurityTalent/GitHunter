@@ -65,3 +65,28 @@ fn generates_shell_completions() {
         .success()
         .stdout(predicate::str::contains("Register-ArgumentCompleter"));
 }
+
+#[test]
+fn watch_once_renders_a_read_only_dashboard() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "watch-test"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "api.example.com"])
+        .assert()
+        .success();
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["watch", "--once"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GITHUNTER LIVE DASHBOARD"))
+        .stdout(predicate::str::contains("Project: watch-test"))
+        .stdout(predicate::str::contains("subdomain"))
+        .stdout(predicate::str::contains("Read-only monitor"));
+}

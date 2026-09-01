@@ -85,6 +85,8 @@ enum Commands {
     Status,
     /// Display immutable project history.
     Timeline,
+    /// Continuously display a live, read-only project dashboard.
+    Watch(research_state::WatchArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -121,6 +123,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Status => research_state::execute(cli.repo, research_state::P0Command::Status),
         Commands::Timeline => {
             research_state::execute(cli.repo, research_state::P0Command::Timeline)
+        }
+        Commands::Watch(args) => {
+            research_state::execute(cli.repo, research_state::P0Command::Watch(args))
         }
     }
 }

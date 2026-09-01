@@ -103,11 +103,15 @@ with a target you are authorized to test.
 # Work inside a dedicated directory for this engagement.
 mkdir authorized-target
 cd authorized-target
-githunter init --name "authorized-target"
+githunter init
 ```
 
 GitHunter creates a local `.githunter/` directory in this folder. Keep the
-folder with the engagement notes so its history remains available.
+folder with the engagement notes so its history remains available. Running
+`githunter init` starts a short setup prompt for the project name, primary
+target, authorization note, in-scope domains, and out-of-scope domains. Enter
+multiple scope domains separated by commas. Use `githunter init --name <name>`
+for a non-interactive setup.
 
 ### 2. Record the authorized target and scope
 
@@ -380,6 +384,20 @@ githunter timeline
 
 Snapshots track every supported asset type. Repeated observations update provenance and `last_seen` without creating duplicate canonical assets.
 
+## Live dashboard
+
+Open a second terminal in the project directory and run:
+
+```bash
+githunter watch
+```
+
+The dashboard refreshes every five seconds and shows targets, scope rules,
+asset totals by scope and type, snapshots, configured tools, and the eight most
+recent local timeline events. It is read-only: it never launches `httpx` or any
+other external tool. Stop it with `Ctrl+C`; use `--interval 2` for a two-second
+refresh, or `--once` to print one dashboard frame for a script.
+
 ## Command reference
 
 | Command | Purpose |
@@ -405,6 +423,7 @@ Snapshots track every supported asset type. Repeated observations update provena
 | `githunter diff` | Compare the latest two snapshots. |
 | `githunter status` | Show the project name and current totals for tracked assets and snapshots. |
 | `githunter timeline` | Show the local audit timeline. |
+| `githunter watch [--interval <seconds>] [--once]` | Continuously display a read-only local project dashboard. |
 
 **Command syntax:** square brackets, such as `[file|-]`, mean the value is
 optional and should not be typed. The `|` means “or”: provide a file name to

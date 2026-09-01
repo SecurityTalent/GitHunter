@@ -6,9 +6,11 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead, IsTerminal, Read};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::thread;
+use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
@@ -48,6 +50,18 @@ pub enum P0Command {
     Status,
     /// Display immutable project history.
     Timeline,
+    /// Continuously display a live, read-only project dashboard.
+    Watch(WatchArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WatchArgs {
+    /// Seconds between dashboard refreshes.
+    #[arg(long, default_value_t = 5)]
+    interval: u64,
+    /// Render one dashboard frame and exit (useful for scripts and checks).
+    #[arg(long)]
+    once: bool,
 }
 
 #[derive(Debug, Args)]
@@ -446,6 +460,7 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
         P0Command::Diff => diff(&db),
         P0Command::Status => status(&db),
         P0Command::Timeline => timeline(&db),
+        P0Command::Watch(args) => watch(&repo_dir, &db, args.interval, args.once),
     }
 }
 
@@ -1653,6 +1668,105 @@ fn status(db: &Connection) -> Result<()> {
     let assets: i64 = db.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))?;
     let snapshots: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
     println!("GITHUNTER STATUS\n\nProject: {project}\nAssets: {assets}\nSnapshots: {snapshots}");
+    Ok(())
+}
+
+/// Renders local state only. It does not start tools, scans, or network activity.
+fn watch(repo_dir: &Path, db: &Connection, interval_seconds: u64, once: bool) -> Result<()> {
+    if interval_seconds == 0 {
+        bail!("--interval must be at least 1 second");
+    }
+    let interactive_terminal = io::stdout().is_terminal();
+    loop {
+        if interactive_terminal {
+            print!("\x1b[2J\x1b[H");
+        }
+        watch_frame(repo_dir, db, interval_seconds)?;
+        io::stdout().flush()?;
+        if once {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_secs(interval_seconds));
+    }
+}
+
+fn watch_frame(repo_dir: &Path, db: &Connection, interval_seconds: u64) -> Result<()> {
+    let project: String = db.query_row("SELECT name FROM projects LIMIT 1", [], |r| r.get(0))?;
+    let targets: i64 = db.query_row("SELECT COUNT(*) FROM targets", [], |r| r.get(0))?;
+    let snapshots: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
+    let tools = Repository::load_tool_files(repo_dir)?;
+    let asset_counts = |scope: &str| -> Result<i64> {
+        Ok(db.query_row(
+            "SELECT COUNT(*) FROM assets WHERE scope_status=?1",
+            [scope],
+            |r| r.get(0),
+        )?)
+    };
+    let scope_counts = |state: &str| -> Result<i64> {
+        Ok(db.query_row(
+            "SELECT COUNT(*) FROM scope_rules WHERE state=?1",
+            [state],
+            |r| r.get(0),
+        )?)
+    };
+    let total_assets: i64 = db.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))?;
+
+    println!("GITHUNTER LIVE DASHBOARD");
+    println!("Project: {project}    Updated: {}", now()?);
+    println!(
+        "Refresh: every {interval_seconds} seconds (Ctrl+C to stop; use --interval to change)"
+    );
+    println!("{}", "=".repeat(72));
+    println!("OVERVIEW");
+    println!(
+        "  Targets: {targets:<5}  Scope rules: in {} / out {}",
+        scope_counts("IN_SCOPE")?,
+        scope_counts("OUT_OF_SCOPE")?
+    );
+    println!(
+        "  Assets:  {total_assets:<5}  Snapshots: {snapshots:<5}  Configured tools: {}",
+        tools.len()
+    );
+    println!(
+        "  Asset scope: in {} / out {} / unknown {}",
+        asset_counts("IN_SCOPE")?,
+        asset_counts("OUT_OF_SCOPE")?,
+        asset_counts("UNKNOWN")?
+    );
+
+    println!();
+    println!("ASSET TYPES");
+    let mut type_statement = db.prepare(
+        "SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type ORDER BY asset_type",
+    )?;
+    let types: Vec<(String, i64)> = type_statement
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if types.is_empty() {
+        println!("  No tracked assets yet.");
+    } else {
+        for (kind, count) in types {
+            println!("  {kind:<12} {count}");
+        }
+    }
+
+    println!();
+    println!("RECENT ACTIVITY");
+    let mut events_statement = db.prepare(
+        "SELECT occurred_at,event_type,entity_type FROM timeline_events ORDER BY occurred_at DESC LIMIT 8",
+    )?;
+    let events: Vec<(String, String, String)> = events_statement
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if events.is_empty() {
+        println!("  No activity recorded yet.");
+    } else {
+        for (occurred_at, event_type, entity_type) in events {
+            println!("  {occurred_at}  {event_type} ({entity_type})");
+        }
+    }
+    println!();
+    println!("Read-only monitor: external tools run only through explicit `githunter tool run` commands.");
     Ok(())
 }
 
