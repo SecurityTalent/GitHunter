@@ -16,7 +16,7 @@ use crate::domain::asset::{
     asset_type, classify_and_normalize, extract_matchable_host, matches_pattern, normalize,
     normalize_pattern, AssetType,
 };
-use crate::domain::tool::{ToolDefinition, WorkflowDefinition};
+use crate::domain::tool::{parse_pipeline, ToolDefinition, WorkflowDefinition};
 use crate::repository::Repository;
 
 #[derive(Debug, Subcommand)]
@@ -135,7 +135,7 @@ pub enum AssetCommand {
     },
     /// List tracked assets with optional filtering.
     List {
-        /// Filter by asset type (DOMAIN, SUBDOMAIN, IP, IP_PORT, URL, ENDPOINT)
+        /// Filter by asset type (DOMAIN, SUBDOMAIN, IP, IP_PORT, URL, ENDPOINT, ASN, CIDR)
         #[arg(long = "type")]
         asset_type: Option<String>,
         /// Filter by scope status (IN_SCOPE, OUT_OF_SCOPE, UNKNOWN)
@@ -161,11 +161,15 @@ pub enum ToolCommand {
     List,
     /// Show details of a specific tool.
     Show { name: String },
+    /// Explain a saved command without executing it.
+    Explain { name: String },
     /// Add or configure an external tool.
     Add {
+        /// A familiar command or `|` pipeline (no shell operators are allowed).
+        command: Option<String>,
         #[arg(long)]
         name: String,
-        #[arg(long)]
+        #[arg(long, default_value = "")]
         executable: String,
         #[arg(long, default_value = "")]
         description: String,
@@ -193,6 +197,18 @@ pub enum ToolCommand {
         /// Override target for the tool
         #[arg(long)]
         target: Option<String>,
+        /// Use one explicit asset as the placeholder input.
+        #[arg(long)]
+        asset: Option<String>,
+        /// Read the first non-comment value from a local input file.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Read the first non-comment value from standard input.
+        #[arg(long)]
+        stdin: bool,
+        /// Select the first project asset with this scope status (e.g. in_scope).
+        #[arg(long)]
+        scope: Option<String>,
         /// Ingest tool stdout directly into GitHunter assets
         #[arg(long, default_value_t = true)]
         import: bool,
@@ -303,7 +319,9 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
         P0Command::Tool(args) => match args.command {
             ToolCommand::List => tool_list(&repo_dir, &db),
             ToolCommand::Show { name } => tool_show(&repo_dir, &db, &name),
+            ToolCommand::Explain { name } => tool_explain(&repo_dir, &db, &name),
             ToolCommand::Add {
+                command,
                 name,
                 executable,
                 description,
@@ -318,16 +336,23 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
                     let content = fs::read_to_string(&file_path)?;
                     toml::from_str::<ToolDefinition>(&content)?
                 } else {
+                    let pipeline = command.as_deref().map(parse_pipeline).transpose()?;
+                    let (executable, arguments) = if let Some(stages) = pipeline {
+                        (stages[0][0].clone(), stages[0][1..].to_vec())
+                    } else {
+                        (executable, args)
+                    };
                     ToolDefinition {
                         name,
                         description,
                         executable,
-                        arguments: args,
+                        arguments,
                         input_type,
                         output_type,
                         enabled: true,
                         timeout_seconds: timeout,
                         tags,
+                        command: command.unwrap_or_default(),
                     }
                 };
                 tool_add(&repo_dir, &mut db, tool)
@@ -337,12 +362,23 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
             ToolCommand::Run {
                 name,
                 target,
+                asset,
+                file,
+                stdin,
+                scope,
                 import,
             } => {
+                let selected_target = resolve_run_value(
+                    &db,
+                    target.or(asset),
+                    file.as_deref(),
+                    stdin,
+                    scope.as_deref(),
+                )?;
                 if name == "all" {
-                    tool_run_all(&repo_dir, &mut db, target.as_deref(), import)
+                    tool_run_all(&repo_dir, &mut db, Some(&selected_target), import)
                 } else {
-                    tool_run(&repo_dir, &mut db, &name, target.as_deref(), import)
+                    tool_run(&repo_dir, &mut db, &name, Some(&selected_target), import)
                 }
             }
         },
@@ -386,6 +422,50 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
 
 fn now() -> Result<String> {
     Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
+}
+
+fn resolve_run_value(
+    db: &Connection,
+    explicit: Option<String>,
+    file: Option<&Path>,
+    stdin: bool,
+    scope: Option<&str>,
+) -> Result<String> {
+    if let Some(value) = explicit {
+        return Ok(value);
+    }
+    if let Some(path) = file {
+        return fs::read_to_string(path)
+            .with_context(|| format!("could not read input file {}", path.display()))?
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .context("input file contains no usable value");
+    }
+    if stdin {
+        let mut value = String::new();
+        io::stdin().read_to_string(&mut value)?;
+        return value
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .context("stdin contains no usable value");
+    }
+    if let Some(state) = scope {
+        return db.query_row("SELECT normalized_value FROM assets WHERE scope_status=?1 ORDER BY normalized_value LIMIT 1", [state.to_ascii_uppercase()], |r| r.get(0)).optional()?
+            .context("no project asset matched --scope");
+    }
+    db.query_row(
+        "SELECT value FROM targets ORDER BY value LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .optional()?
+    .context(
+        "no target found. Add a target or specify --target, --asset, --file, --stdin, or --scope",
+    )
 }
 
 fn event(db: &Connection, kind: &str, entity: &str, id: &str) -> Result<()> {
@@ -742,6 +822,8 @@ pub fn import_assets_from_reader<R: BufRead>(
         "IP_PORT",
         "URL",
         "ENDPOINT",
+        "ASN",
+        "CIDR",
         "UNKNOWN",
     ] {
         if let Some(count) = type_counts.get(t) {
@@ -849,7 +931,7 @@ fn tool_list(repo_dir: &Path, _db: &Connection) -> Result<()> {
     let tools = Repository::load_tool_files(repo_dir)?;
     if tools.is_empty() {
         println!("No external tools configured.");
-        println!("Add tools with `githunter tool add --name <name> --executable <bin>`");
+        println!("Add tools with `githunter tool add \"<command>\" --name <name>`");
         return Ok(());
     }
 
@@ -887,6 +969,37 @@ fn tool_show(repo_dir: &Path, _db: &Connection, name: &str) -> Result<()> {
         println!("Timeout: {timeout}s");
     }
     println!("Tags: {:?}", tool.tags);
+    Ok(())
+}
+
+fn tool_explain(repo_dir: &Path, _db: &Connection, name: &str) -> Result<()> {
+    let tool = Repository::load_tool_files(repo_dir)?
+        .into_iter()
+        .find(|t| t.name == name)
+        .with_context(|| format!("tool '{name}' not found"))?;
+    let command = if tool.command.is_empty() {
+        format!("{} {}", tool.executable, tool.arguments.join(" "))
+    } else {
+        tool.command.clone()
+    };
+    let stages = parse_pipeline(&command)?;
+    println!("Tool: {}\nSaved command: {}\nStages:", tool.name, command);
+    for (index, stage) in stages.iter().enumerate() {
+        println!("  {}. {}", index + 1, stage.join(" "));
+    }
+    let placeholders: Vec<&str> = ["{target}", "{asset}", "{input}", "{file}", "{scope}"]
+        .into_iter()
+        .filter(|p| command.contains(*p))
+        .collect();
+    println!(
+        "Placeholders: {}",
+        if placeholders.is_empty() {
+            "none".to_owned()
+        } else {
+            placeholders.join(", ")
+        }
+    );
+    println!("Execution is explicit only. Final stdout is recorded locally and optionally ingested as assets.");
     Ok(())
 }
 
@@ -1009,6 +1122,10 @@ fn tool_run(
         bail!("tool '{name}' is currently disabled");
     }
 
+    if !tool.command.trim().is_empty() {
+        return tool_run_pipeline(db, &tool, target_override, import_output);
+    }
+
     let target_val = if let Some(t) = target_override {
         t.to_string()
     } else {
@@ -1067,6 +1184,111 @@ fn tool_run(
         import_assets_from_reader(db, std::io::Cursor::new(stdout_bytes), &tool.name)?;
     }
 
+    Ok(())
+}
+
+fn tool_run_pipeline(
+    db: &mut Connection,
+    tool: &ToolDefinition,
+    target_override: Option<&str>,
+    import_output: bool,
+) -> Result<()> {
+    let target = if let Some(value) = target_override {
+        value.to_owned()
+    } else {
+        db.query_row(
+            "SELECT value FROM targets ORDER BY value LIMIT 1",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+        .context("no target found. Add a target or specify --target")?
+    };
+    let scope: Vec<String> = db
+        .prepare("SELECT pattern FROM scope_rules WHERE state='IN_SCOPE' ORDER BY pattern")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let stages = parse_pipeline(&tool.command)?;
+    println!(
+        "[Opt-In Execution] Running pipeline '{}' with target '{}' ({} stages)...",
+        tool.name,
+        target,
+        stages.len()
+    );
+    let started = now()?;
+    let mut input = Vec::new();
+    let mut stderr = Vec::new();
+    let mut code = Some(0);
+    for (index, stage) in stages.iter().enumerate() {
+        if !check_executable_exists(&stage[0]) {
+            bail!(
+                "pipeline stage {} executable not found: {}",
+                index + 1,
+                stage[0]
+            );
+        }
+        let args: Vec<String> = stage[1..]
+            .iter()
+            .map(|arg| {
+                arg.replace("{target}", &target)
+                    .replace("{asset}", &target)
+                    .replace("{input}", &target)
+                    .replace("{scope}", &scope.join(","))
+            })
+            .collect();
+        let mut command = std::process::Command::new(&stage[0]);
+        command
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("could not start pipeline stage {}", index + 1))?;
+        if !input.is_empty() {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .context("could not open stage stdin")?
+                .write_all(&input)?;
+        }
+        let result = child.wait_with_output()?;
+        code = result.status.code();
+        stderr.extend_from_slice(&result.stderr);
+        input = result.stdout;
+        if !result.status.success() {
+            break;
+        }
+    }
+    let success = code == Some(0);
+    db.execute(
+        "INSERT INTO tool_executions VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            Uuid::new_v4().to_string(),
+            tool.name,
+            tool.command,
+            target,
+            started,
+            now()?,
+            if success { "success" } else { "failed" },
+            code,
+            String::from_utf8_lossy(&input),
+            String::from_utf8_lossy(&stderr)
+        ],
+    )?;
+    event(db, "tool.executed", "tool", &tool.name)?;
+    if !success {
+        bail!(
+            "pipeline failed with exit {:?}: {}",
+            code,
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    if import_output && !input.is_empty() {
+        println!("Ingesting pipeline output into GitHunter asset pipeline...");
+        import_assets_from_reader(db, io::Cursor::new(input), &format!("tool:{}", tool.name))?;
+    }
     Ok(())
 }
 
@@ -1222,7 +1444,7 @@ fn recommend(repo_dir: &Path, db: &Connection) -> Result<()> {
     }
     if tools.is_empty() {
         println!(
-            "  {step}. Configure passive discovery tools: `githunter tool add --name subfinder --executable subfinder --args \"-d {{target}} -silent\"`"
+            "  {step}. Configure passive discovery tools: `githunter tool add \"subfinder -d {{target}} -silent\" --name subfinder`"
         );
         step += 1;
     } else if asset_count > 0 && snapshot_count > 0 {

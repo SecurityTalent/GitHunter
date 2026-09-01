@@ -129,3 +129,88 @@ fn tool_and_workflow_management() {
         .success()
         .stdout(predicate::str::contains("Removed tool: mock-echo"));
 }
+
+#[test]
+fn saved_pipeline_is_explicit_and_shell_syntax_is_rejected() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "pipeline-test"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["target", "add", "example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "add",
+            "cmd /c echo api.{target} | findstr api",
+            "--name",
+            "pipe",
+        ])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "explain", "pipe"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Stages"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "pipe"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Ingesting pipeline output"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("api.example.com"));
+
+    // All friendly input selectors resolve a deterministic value before explicit execution.
+    let inputs = dir.path().join("inputs.txt");
+    std::fs::write(&inputs, "file.example.com\n").expect("write input file");
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "pipe", "--asset", "asset.example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "pipe", "--file", inputs.to_str().unwrap()])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["scope", "add", "*.example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "scoped.example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "pipe", "--scope", "in_scope"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "pipe", "--stdin"])
+        .write_stdin("stdin.example.com\n")
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "add", "echo ok; whoami", "--name", "unsafe"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("shell operators"));
+}

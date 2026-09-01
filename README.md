@@ -127,19 +127,15 @@ githunter asset list --json
 Tools are defined locally and only run when explicitly triggered:
 
 ```bash
-# Register a tool definition
-githunter tool add \
-  --name "subfinder" \
-  --executable "subfinder" \
-  --description "Passive subdomain discovery" \
-  --args "-d {target} -silent" \
-  --tags "subdomain-discovery,passive"
+# Save a tool or pipeline exactly as you normally type it
+githunter tool add "subfinder -d {target} -silent | httpx -silent" --name "passive-recon" \
+  --description "Passive subdomain and HTTP discovery"
 
 # Validate tool configuration and verify executable existence in PATH
 githunter tool validate subfinder
 
 # Run tool explicitly and auto-ingest stdout into GitHunter asset pipeline
-githunter tool run subfinder
+githunter tool run passive-recon --target target.com
 
 # Create an automated multi-step workflow
 githunter workflow add --name "passive-recon" --steps "subfinder,httpx" --description "Full passive recon flow"
@@ -197,10 +193,11 @@ githunter timeline
 | `githunter asset list [--type <t>] [--scope <s>] [--json]` | List tracked assets with filters and JSON support |
 | `githunter tool list` | List all configured external tools |
 | `githunter tool show <name>` | Show full configuration for a tool |
-| `githunter tool add --name <n> --executable <e> ...` | Add or configure an external tool |
+| `githunter tool add "<command>" --name <n>` | Save a single command or safe `|` pipeline; legacy `--executable` / `--args` remain supported |
 | `githunter tool remove <name>` | Remove a configured tool |
 | `githunter tool validate <name>` | Check tool syntax, args, and executable availability |
-| `githunter tool run <name|all> [--target <t>]` | Explicitly execute a tool and ingest output |
+| `githunter tool run <name|all> [--target <t>\|--asset <a>\|--file <p>\|--stdin\|--scope <s>]` | Explicitly execute a tool/pipeline and ingest final stdout |
+| `githunter tool explain <name>` | Show stages, placeholders, and safety behavior without execution |
 | `githunter workflow list` | List configured automated workflows |
 | `githunter workflow add --name <n> --steps <s1,s2>` | Create an ordered multi-step tool workflow |
 | `githunter workflow run <name>` | Execute a workflow in deterministic sequence |
@@ -277,5 +274,19 @@ cargo test
 ---
 
 ## 📄 License
+
+## Easy Tool Pipelines
+
+Save commands you already know; GitHunter does not require a separate argument schema. A saved command is inert until you explicitly run it:
+
+```powershell
+githunter tool add "subfinder -d {target} -silent | httpx -silent | katana -silent" --name recon
+githunter tool explain recon
+githunter tool run recon --target target.com
+```
+
+`{target}`, `{asset}`, `{input}`, `{file}`, and `{scope}` are optional. `tool run` also accepts `--asset`, `--file`, `--stdin`, and `--scope in_scope`. Pipelines are parsed into direct process stages and never sent to a shell; redirection and shell-control syntax are rejected. Final stdout is ingested with `tool:<name>` provenance, while execution command, timestamps, status, stdout, and stderr remain local.
+
+Mixed imports accept ASN (`AS13335` or `13335`, canonicalized to `AS13335`) and IPv4/IPv6 CIDR (`192.168.1.99/24` becomes `192.168.1.0/24`). They deduplicate and participate in lists, snapshots, and diffs. ASN/CIDR scope rules are exact tracking rules only: GitHunter never expands them, scans them, or infers authorization.
 
 Licensed under the [Apache-2.0 License](LICENSE).

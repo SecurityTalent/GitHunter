@@ -144,3 +144,48 @@ fn stdin_asset_ingestion() {
         .stdout(predicate::str::contains("Imported: 2"))
         .stdout(predicate::str::contains("New assets: 2"));
 }
+
+#[test]
+fn asn_and_cidr_are_normalized_and_deduplicated() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "network-assets"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "AS0013335"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AS13335 (ASN"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "192.168.1.99/24"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("192.168.1.0/24 (CIDR"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "192.168.1.0/24"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Asset already tracked"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list", "--type", "asn"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("AS13335"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["scope", "add", "AS13335"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["scope", "check", "AS13335"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("IN_SCOPE"));
+}

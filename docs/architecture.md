@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-GITHUNTER is an offline, local-first **Security Research Version Control CLI** for authorized work. It records research state and history; it never runs recon, scanners, shells, payloads, or external tools in the MVP. Import provenance can name tools such as BBRF, Burp, subfinder, or httpx without invoking them.
+GITHUNTER is an offline, local-first **Security Research Version Control CLI** for authorized work. It records research state and history. External tools can run only through an explicit user command, never through imports, recommendations, or automatic scheduling. Import provenance can name tools such as BBRF, Burp, subfinder, or httpx without invoking them.
 
 The differentiator is a durable chain:
 
@@ -57,3 +57,17 @@ User-facing `recon/`, `notes/`, `findings/`, and `evidence/` folders may be crea
 - Objects are written to a temporary sibling and atomically renamed after hashing.
 - SQLite uses foreign keys, busy timeout, WAL mode, and short write transactions.
 - Each command discovers the nearest `.githunter` ancestor; no global state or network is needed.
+
+## Explicit saved-command pipelines
+
+Tools may be legacy executable definitions or a saved one-line command/pipeline.
+The pipeline parser understands quoting and stage separators (`|`), then starts
+each executable directly with an argument array. It never invokes a shell and
+rejects control operators, redirection, and command substitution syntax. Running
+a tool is always an explicit command. Each execution is recorded locally with
+its definition, selected input, timestamps, exit status, final stdout, and
+stderr; final stdout can become provenance-bearing asset observations.
+
+ASN and CIDR are canonical asset identities alongside host-oriented assets.
+They can be exact scope rules, but are never expanded into addresses and do not
+confer authorization on related assets.

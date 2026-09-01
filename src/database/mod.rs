@@ -73,13 +73,18 @@ CREATE TABLE tool_workflows (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE tool_executions (
+  id TEXT PRIMARY KEY, tool_name TEXT NOT NULL, command_definition TEXT NOT NULL,
+  input_summary TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
+  status TEXT NOT NULL, exit_code INTEGER, stdout TEXT NOT NULL, stderr TEXT NOT NULL
+);
 CREATE INDEX assets_scope_status ON assets(scope_status);
 CREATE INDEX assets_last_seen ON assets(last_seen);
 CREATE INDEX observations_asset_observed ON asset_observations(asset_id, observed_at);
 CREATE INDEX snapshot_assets_asset ON snapshot_assets(asset_id);
 "#;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub fn initialize(path: &Path, project_id: &str, project_name: &str, now: &str) -> Result<()> {
     let connection = Connection::open(path)
@@ -142,6 +147,19 @@ pub fn migrate(connection: &mut Connection, now: &str) -> Result<()> {
         )?;
         tx.execute(
             "UPDATE projects SET schema_version = 3, updated_at = ?1",
+            [now],
+        )?;
+        tx.commit()?;
+    }
+    if current_version < 4 {
+        let tx = connection.transaction()?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS tool_executions (id TEXT PRIMARY KEY, tool_name TEXT NOT NULL, command_definition TEXT NOT NULL, input_summary TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, status TEXT NOT NULL, exit_code INTEGER, stdout TEXT NOT NULL, stderr TEXT NOT NULL);")?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (4, ?1)",
+            [now],
+        )?;
+        tx.execute(
+            "UPDATE projects SET schema_version = 4, updated_at = ?1",
             [now],
         )?;
         tx.commit()?;

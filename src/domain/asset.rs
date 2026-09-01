@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// Supported asset types for classification, storage, filtering, and display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -12,6 +12,8 @@ pub enum AssetType {
     IpPort,
     Url,
     Endpoint,
+    Asn,
+    Cidr,
     Unknown,
 }
 
@@ -24,6 +26,8 @@ impl AssetType {
             AssetType::IpPort => "ip_port",
             AssetType::Url => "url",
             AssetType::Endpoint => "endpoint",
+            AssetType::Asn => "asn",
+            AssetType::Cidr => "cidr",
             AssetType::Unknown => "unknown",
         }
     }
@@ -36,6 +40,8 @@ impl AssetType {
             AssetType::IpPort => "IP_PORT",
             AssetType::Url => "URL",
             AssetType::Endpoint => "ENDPOINT",
+            AssetType::Asn => "ASN",
+            AssetType::Cidr => "CIDR",
             AssetType::Unknown => "UNKNOWN",
         }
     }
@@ -48,6 +54,8 @@ impl AssetType {
             "ip_port" | "ipport" | "ip:port" => Some(AssetType::IpPort),
             "url" => Some(AssetType::Url),
             "endpoint" => Some(AssetType::Endpoint),
+            "asn" => Some(AssetType::Asn),
+            "cidr" => Some(AssetType::Cidr),
             "unknown" => Some(AssetType::Unknown),
             _ => None,
         }
@@ -85,6 +93,19 @@ pub fn classify_and_normalize(raw: &str) -> Result<(AssetType, String)> {
     if trimmed.starts_with('/') {
         let endpoint = normalize_endpoint(trimmed)?;
         return Ok((AssetType::Endpoint, endpoint));
+    }
+
+    // CIDRs are checked before plain IPs and normalized to their network address.
+    if trimmed.contains('/') {
+        if let Some(cidr) = normalize_cidr(trimmed) {
+            return Ok((AssetType::Cidr, cidr));
+        }
+    }
+
+    // AS-prefixed values are unambiguous. Bare ASNs intentionally require 2-10 digits
+    // so one-character numeric noise is not silently accepted as an asset.
+    if let Some(asn) = normalize_asn(trimmed) {
+        return Ok((AssetType::Asn, asn));
     }
 
     // 3. Raw IP Address
@@ -157,7 +178,50 @@ pub fn extract_matchable_host(asset_type: AssetType, value: &str) -> Option<Stri
             }
         }
         AssetType::Url => extract_host_from_url(value),
+        AssetType::Asn | AssetType::Cidr => Some(value.to_ascii_lowercase()),
         AssetType::Endpoint | AssetType::Unknown => None,
+    }
+}
+
+fn normalize_asn(raw: &str) -> Option<String> {
+    let digits = raw
+        .strip_prefix("AS")
+        .or_else(|| raw.strip_prefix("as"))
+        .unwrap_or(raw);
+    if !(2..=10).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let value: u32 = digits.parse().ok()?;
+    if value == 0 {
+        return None;
+    }
+    Some(format!("AS{value}"))
+}
+
+fn normalize_cidr(raw: &str) -> Option<String> {
+    let (address, prefix) = raw.split_once('/')?;
+    let ip: IpAddr = address.parse().ok()?;
+    let prefix: u8 = prefix.parse().ok()?;
+    match ip {
+        IpAddr::V4(ip) if prefix <= 32 => {
+            let n = u32::from(ip);
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
+            Some(format!("{}/{}", Ipv4Addr::from(n & mask), prefix))
+        }
+        IpAddr::V6(ip) if prefix <= 128 => {
+            let n = u128::from(ip);
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (128 - prefix)
+            };
+            Some(format!("{}/{}", Ipv6Addr::from(n & mask), prefix))
+        }
+        _ => None,
     }
 }
 
@@ -365,6 +429,18 @@ mod tests {
         assert_eq!(
             classify_and_normalize("/api/v1/users").unwrap(),
             (AssetType::Endpoint, "/api/v1/users".into())
+        );
+        assert_eq!(
+            classify_and_normalize("as0015139").unwrap(),
+            (AssetType::Asn, "AS15139".into())
+        );
+        assert_eq!(
+            classify_and_normalize("192.168.1.99/24").unwrap(),
+            (AssetType::Cidr, "192.168.1.0/24".into())
+        );
+        assert_eq!(
+            classify_and_normalize("2001:db8:1::/32").unwrap(),
+            (AssetType::Cidr, "2001:db8::/32".into())
         );
     }
 

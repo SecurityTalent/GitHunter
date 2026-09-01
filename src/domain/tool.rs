@@ -32,6 +32,9 @@ pub struct ToolDefinition {
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Original one-line command or pipeline. Legacy definitions leave this empty.
+    #[serde(default)]
+    pub command: String,
 }
 
 impl ToolDefinition {
@@ -47,8 +50,11 @@ impl ToolDefinition {
         {
             bail!("tool name contains invalid characters: only alphanumeric, hyphen, and underscore allowed");
         }
-        if self.executable.trim().is_empty() {
+        if self.executable.trim().is_empty() && self.command.trim().is_empty() {
             bail!("tool executable cannot be empty");
+        }
+        if !self.command.trim().is_empty() {
+            parse_pipeline(&self.command)?;
         }
         // Validate input and output types
         let input = self.input_type.trim().to_ascii_lowercase();
@@ -73,6 +79,73 @@ impl ToolDefinition {
             })
             .collect()
     }
+}
+
+/// A shell-free parser for a familiar command line. It supports quotes and `|`, but
+/// deliberately rejects shell control/redirection syntax: saved commands are never
+/// evaluated by a shell.
+pub fn parse_pipeline(command: &str) -> Result<Vec<Vec<String>>> {
+    let mut stages = vec![Vec::new()];
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in command.chars() {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            } else {
+                word.push(ch);
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        if matches!(ch, ';' | '&' | '`' | '>' | '<' | '\n' | '\r') {
+            bail!("saved commands do not allow shell operators or redirection");
+        }
+        if ch == '|' {
+            if !word.is_empty() {
+                stages
+                    .last_mut()
+                    .expect("stage")
+                    .push(std::mem::take(&mut word));
+            }
+            if stages.last().map_or(true, Vec::is_empty) {
+                bail!("pipeline has an empty stage");
+            }
+            stages.push(Vec::new());
+        } else if ch.is_whitespace() {
+            if !word.is_empty() {
+                stages
+                    .last_mut()
+                    .expect("stage")
+                    .push(std::mem::take(&mut word));
+            }
+        } else {
+            word.push(ch);
+        }
+    }
+    if escaped || quote.is_some() {
+        bail!("unterminated quote or escape in saved command");
+    }
+    if !word.is_empty() {
+        stages.last_mut().expect("stage").push(word);
+    }
+    if stages.last().map_or(true, Vec::is_empty) {
+        bail!("pipeline has an empty stage");
+    }
+    Ok(stages)
 }
 
 /// An ordered workflow of registered tools.
@@ -119,6 +192,7 @@ mod tests {
             enabled: true,
             timeout_seconds: Some(60),
             tags: vec!["subdomain-discovery".into()],
+            command: String::new(),
         };
         assert!(tool.validate().is_ok());
 
@@ -138,7 +212,22 @@ mod tests {
             enabled: true,
             timeout_seconds: None,
             tags: vec![],
+            command: String::new(),
         };
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn parses_quoted_pipeline_without_shell_syntax() {
+        let stages = parse_pipeline("echo 'api.{target}' | tool -x \"two words\"").unwrap();
+        assert_eq!(
+            stages,
+            vec![
+                vec!["echo", "api.{target}"],
+                vec!["tool", "-x", "two words"]
+            ]
+        );
+        assert!(parse_pipeline("echo ok; whoami").is_err());
+        assert!(parse_pipeline("echo ok | | cat").is_err());
     }
 }

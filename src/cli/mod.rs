@@ -10,7 +10,7 @@ use std::path::PathBuf;
     name = "githunter",
     version,
     about = "Offline Security Research Version Control",
-    long_about = "GitHunter records authorized security research locally. It never executes reconnaissance or external security tools."
+    long_about = "GitHunter records authorized security research locally. External tools run only after an explicit, auditable command."
 )]
 pub struct Cli {
     /// Use an explicit project directory instead of the current directory.
