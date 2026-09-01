@@ -305,3 +305,40 @@ fn requested_asset_list_export_and_httpx_import_workflow() {
         .stdout(predicate::str::contains("https://api.example.com"))
         .stdout(predicate::str::contains("https://www.example.com"));
 }
+
+#[test]
+fn asset_list_all_accepts_a_user_selected_limit() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "asset-list-limit-test"])
+        .assert()
+        .success();
+
+    for value in ["alpha.example", "bravo.example", "charlie.example"] {
+        githunter()
+            .current_dir(dir.path())
+            .args(["asset", "add", value])
+            .assert()
+            .success();
+    }
+
+    // `all` removes the scope filter, and the next positional value is the
+    // caller-selected maximum number of rows to print.
+    let output = githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list", "--type", "domain", "all", "2", "--json"])
+        .output()
+        .expect("asset list command should run");
+    assert!(output.status.success());
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("asset list should emit JSON");
+    assert_eq!(
+        listed
+            .as_array()
+            .expect("list output should be an array")
+            .len(),
+        2
+    );
+}
