@@ -46,7 +46,7 @@ cargo install --git https://github.com/SecurityTalent/GitHunter.git
 ```
 
 If Cargo's bin directory is not already on your `PATH`, add it for the current
-shell session:
+shell session on Linux or macOS:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -63,28 +63,96 @@ cd GitHunter
 cargo build --release
 ```
 
-The release binary is written to `target/release/`. On Windows, ensure `%USERPROFILE%\.cargo\bin` is in `PATH` when using Cargo installation.
+The release binary is written to `target/release/`. On Windows, ensure
+`%USERPROFILE%\.cargo\bin` is in `PATH` when using Cargo installation. For the
+current PowerShell session, run:
 
-## Quick start
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+```
+
+Confirm the installation before creating a project:
 
 ```bash
+githunter --version
+githunter --help
+```
+
+## Before you begin
+
+Use GitHunter only where you have clear, written authorization. Before running
+an external tool, make sure that you have its permission requirements, rate
+limits, and out-of-scope exclusions. GitHunter tracks and classifies assets; it
+does not create authorization for a target or an external command.
+
+External tools such as `subfinder` and `httpx` are optional and are not bundled
+with GitHunter. Install and test each one separately before saving it as a
+GitHunter tool.
+
+<a id="quick-start"></a>
+
+## Real-world walkthrough
+
+This example creates a local project for an authorized program, defines its
+scope, records initial findings, and saves a baseline. Replace `target.com`
+with a target you are authorized to test.
+
+### 1. Create a project
+
+```bash
+# Work inside a dedicated directory for this engagement.
+mkdir authorized-target
+cd authorized-target
 githunter init --name "authorized-target"
+```
+
+GitHunter creates a local `.githunter/` directory in this folder. Keep the
+folder with the engagement notes so its history remains available.
+
+### 2. Record the authorized target and scope
+
+```bash
 githunter target add "target.com" --authorization "Authorized security program"
 githunter scope add "target.com"
 githunter scope add "*.target.com"
-githunter asset import assets.txt --source manual
-githunter snapshot create --note "Baseline"
-# Display the current project name and the totals for tracked assets and snapshots.
-githunter status
+githunter scope out add "admin.target.com"
+githunter scope list
 ```
 
-Check an asset before acting on it:
+An out-of-scope rule is important when a program explicitly excludes a host or
+subdomain. Check a value before using it with an external tool:
 
 ```bash
 githunter scope check "https://api.target.com/login"
 ```
 
-Possible results are `IN_SCOPE`, `OUT_OF_SCOPE`, and `UNKNOWN`. An `UNKNOWN` result is never treated as authorization.
+Only `IN_SCOPE` is a positive scope match. `OUT_OF_SCOPE` and `UNKNOWN` must
+not be treated as permission to act.
+
+### 3. Add known assets and create a baseline
+
+Create an `assets.txt` file with one value per line, then import it:
+
+```bash
+githunter asset import assets.txt --source manual
+githunter snapshot create --note "Baseline"
+githunter status
+```
+
+At this point, `status` shows the project totals and `timeline` shows the local
+audit history. You now have a known starting point for later comparisons.
+
+### 4. Add new observations and review change
+
+```bash
+githunter asset import follow-up-assets.txt --source recon
+githunter snapshot create --note "Follow-up discovery"
+githunter diff
+githunter timeline
+```
+
+`diff` compares the two latest snapshots, making it easy to identify what
+changed since the previous baseline.
 
 ## Asset ingestion
 
@@ -104,9 +172,20 @@ https://example.com/login
 ```bash
 githunter asset add "API.EXAMPLE.COM." --source manual
 githunter asset import assets.txt --source recon
-cat assets.txt | githunter asset import - --source pipeline
 githunter asset list --type cidr
 githunter asset list --type asn
+```
+
+To import tool output from standard input, use the version for your shell:
+
+```bash
+# Linux or macOS
+cat assets.txt | githunter asset import - --source pipeline
+```
+
+```powershell
+# PowerShell
+Get-Content assets.txt | githunter asset import - --source pipeline
 ```
 
 ### Interoperability with security tools
@@ -132,15 +211,25 @@ githunter asset export --type subdomain --scope in_scope \
   | githunter asset import - --source httpx
 ```
 
-Use the same pattern with any compatible newline-based tool:
+```powershell
+# The same scope-filtered probe flow in PowerShell.
+githunter asset export --type subdomain --scope in_scope |
+  httpx -silent |
+  githunter asset import - --source httpx
+```
+
+For example, use `dnsx` to resolve only the subdomains already classified as
+in scope, then retain its output as a separate source:
 
 ```bash
-# Send a filtered canonical asset set to another local tool.
-githunter asset export --type subdomain --scope in_scope | your-tool
-
-# Retain provenance when importing a tool's output.
-some-tool | githunter asset import - --source some-tool
+githunter asset export --type subdomain --scope in_scope \
+  | dnsx -silent \
+  | githunter asset import - --source dnsx
 ```
+
+`subfinder` is useful for passive discovery, `dnsx` for DNS resolution, and
+`httpx` for HTTP probing. Install each tool separately and follow the target
+program's authorization and rate-limit requirements.
 
 Before running an external tool, define the authorized target and scope rules.
 GitHunter records and classifies observations; it does not grant authorization
@@ -148,38 +237,84 @@ to an external command or infer permission for `UNKNOWN` assets.
 
 ASN values are canonicalized to forms such as `AS13335`. CIDRs are normalized to their network address, for example `192.168.1.99/24` becomes `192.168.1.0/24`.
 
-## Saved tools and pipelines
+## Using external tools
 
-Save a command you already know rather than learning a GitHunter-specific argument format:
+GitHunter lets you save the security tools you already use, then run them from
+the project with a clear audit trail. A saved tool is only a configuration: it
+never runs when you add, view, validate, or import it. Execution requires an
+explicit `tool run` or `workflow run` command.
+
+### Save, review, and run a tool
+
+The example below saves a passive subdomain-discovery command, reviews it
+without running anything, verifies that the required executable is available,
+and then runs it for an authorized target. Review imported assets and their
+scope status before sending them to an active probing tool.
 
 ```bash
-githunter tool add "subfinder -d {target} -silent | httpx -silent" --name passive-recon
-githunter tool explain passive-recon
-githunter tool validate passive-recon
-githunter tool run passive-recon --target target.com
+# 1. Save a passive-discovery tool.
+githunter tool add "subfinder -d {target} -silent" --name subfinder-passive
+
+# 2. Review the command and validate its local dependencies.
+githunter tool explain subfinder-passive
+githunter tool validate subfinder-passive
+
+# 3. Run it only after confirming the target is authorized.
+githunter tool run subfinder-passive --target target.com
+
+# 4. Review what was recorded before any further action.
+githunter asset list --source tool:subfinder-passive
 ```
 
-Tools run only when `tool run` or `workflow run` is explicitly invoked. GitHunter does not execute a saved tool when it is added, imported, recommended, or discovered.
+Use `githunter tool list` to view configured tools, `githunter tool show <name>`
+for a saved configuration, and `githunter tool remove <name>` to delete one.
 
-Optional placeholders are `{target}`, `{asset}`, `{input}`, `{file}`, and `{scope}`. Select a deterministic input with one of:
+### Provide input safely
+
+Use `{target}` in a saved command to pass the approved value at run time. In a
+saved command or pipeline, `{asset}`, `{input}`, and `{scope}` are also
+available. Choose the value source explicitly:
 
 ```bash
-githunter tool run passive-recon --target target.com
-githunter tool run passive-recon --asset api.target.com
-githunter tool run passive-recon --file targets.txt
-cat targets.txt | githunter tool run passive-recon --stdin
-githunter tool run passive-recon --scope in_scope
+githunter tool run <tool-name> --target target.com
+githunter tool run <tool-name> --asset api.target.com
+githunter tool run <tool-name> --file targets.txt
+Get-Content targets.txt | githunter tool run <tool-name> --stdin
+githunter tool run <tool-name> --scope in_scope
 ```
 
-For `--file`, `--stdin`, and `--scope`, the first valid value is selected and printed before execution. Final pipeline output is ingested as assets by default and recorded with `tool:<name>` provenance.
+When `--file`, `--stdin`, or `--scope` is used, GitHunter selects and displays
+the first valid value before it starts the tool. Tool output is imported as
+assets by default and recorded with its tool name as the source (for example,
+`tool:subfinder-passive` for a saved command), so discoveries remain traceable.
 
-Pipelines support quoted arguments and `|` separators. They are parsed into direct process invocations; GitHunter never passes a saved pipeline to a shell. Shell control operators and redirection (`;`, `&`, backticks, `<`, `>`) are rejected.
+### Pipeline safety
 
-Legacy definitions remain available for advanced use:
+Pipelines may use quoted arguments and `|` separators. GitHunter executes each
+stage directly instead of passing the pipeline to a shell. Shell control
+operators and redirection (`;`, `&`, backticks, `<`, and `>`) are rejected.
+
+For advanced configurations, you can define an executable and its arguments
+separately:
 
 ```bash
 githunter tool add --name subfinder --executable subfinder --args "-d {target} -silent"
 ```
+
+### Run a repeatable workflow
+
+After validating each saved tool, group trusted steps into a named workflow.
+The steps run in the listed order and still require an explicit run command.
+
+```bash
+githunter workflow add --name daily-passive --description "Authorized passive discovery" --steps subfinder-passive
+githunter workflow show daily-passive
+githunter workflow run daily-passive --target target.com
+```
+
+Use `githunter workflow list` to see saved workflows and
+`githunter workflow remove <name>` to remove one. Review the scope of newly
+imported assets before using any active tool against them.
 
 ## Scope safety
 
@@ -210,20 +345,29 @@ Snapshots track every supported asset type. Repeated observations update provena
 | --- | --- |
 | `githunter init [--name <name>]` | Initialize a local repository. |
 | `githunter target add <value>` | Register an authorized primary target. |
+| `githunter target list` | List registered targets and their authorization notes. |
 | `githunter scope add <pattern>` | Add an in-scope rule. |
 | `githunter scope out add <pattern>` | Add an out-of-scope rule. |
+| `githunter scope check <value>` | Check whether an asset matches the defined scope. |
 | `githunter asset add <value>` | Record one observed asset. |
-| `githunter asset import [file|-]` | Import assets from a file or stdin. |
+| `githunter asset import [file|-]` | Add newline-separated assets to the project. Use a file name, such as `githunter asset import assets.txt`, or use `-` to read piped input, such as `Get-Content assets.txt \| githunter asset import -`. |
 | `githunter asset list` | List assets with type, scope, source, or JSON filters. |
 | `githunter asset export` | Write canonical values to stdout for another tool. |
 | `githunter tool add "<command>" --name <name>` | Save a command or pipeline. |
+| `githunter tool list` | List saved tool configurations. |
 | `githunter tool explain <name>` | Describe stages and placeholders without execution. |
+| `githunter tool validate <name>` | Check a saved configuration and its executable. |
 | `githunter tool run <name>` | Explicitly run a saved tool or pipeline. |
+| `githunter workflow add --name <name> --steps <tools>` | Save an ordered workflow. |
 | `githunter workflow run <name>` | Explicitly run a saved workflow. |
 | `githunter snapshot create` | Create an immutable snapshot. |
 | `githunter diff` | Compare the latest two snapshots. |
 | `githunter status` | Show the project name and current totals for tracked assets and snapshots. |
 | `githunter timeline` | Show the local audit timeline. |
+
+**Command syntax:** square brackets, such as `[file|-]`, mean the value is
+optional and should not be typed. The `|` means “or”: provide a file name to
+import from a file, or provide `-` to import values sent through a pipe.
 
 ## Documentation
 
