@@ -4,16 +4,30 @@
 
 <p align="center">
   <strong>Local-first security research workspace for authorized engagements.</strong><br>
-  A <a href="https://securitytalent.net">SecurityTalent.net</a> product.
+  Built by <a href="https://securitytalent.net">SecurityTalent</a>.
 </p>
 
-# GitHunter
+<p align="center">
+  <a href="https://github.com/SecurityTalent/GitHunter/releases">Releases</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="https://securitytalent.net">SecurityTalent</a>
+</p>
 
-GitHunter is an offline, local-first command-line tool for authorized security research. It records scope, observed assets, provenance, immutable snapshots, and changes over time in a portable `.githunter/` repository.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0 license"></a>
+  <img src="https://img.shields.io/badge/version-1.0.0-brightgreen.svg" alt="Version 1.0.0">
+  <img src="https://img.shields.io/badge/rust-1.78%2B-orange.svg" alt="Rust 1.78 or newer">
+</p>
+
+## Overview
+
+GitHunter is an offline, local-first CLI for authorized security research. It records scope, observed assets, provenance, immutable snapshots, and changes over time in a portable `.githunter/` repository.
 
 It is intended for authorized bug bounty programs, penetration tests, labs, CTFs, and similar approved research.
 
-## Highlights
+## Features
 
 - Local SQLite storage with WAL mode and foreign keys
 - Deterministic scope rules and asset deduplication
@@ -200,7 +214,9 @@ Snapshots track every supported asset type. Repeated observations update provena
 | `githunter status` | Show the current research-state summary. |
 | `githunter timeline` | Show the local audit timeline. |
 
-Use `githunter --help` or `<command> --help` for full options. Global options include `--repo <path>` and `--no-color`.
+## Documentation
+
+Use `githunter --help` or `<command> --help` for complete CLI reference. Global options include `--repo <path>` and `--no-color`; design and implementation notes are available in [`docs/`](docs/).
 
 ## Architecture
 
@@ -225,8 +241,6 @@ Each repository stores its data locally:
   workflows/
   backups/
 ```
-
-Further design documentation is available in [`docs/`](docs/).
 
 ## Security model
 
