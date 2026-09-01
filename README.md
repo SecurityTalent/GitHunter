@@ -75,14 +75,42 @@ githunter asset list --type cidr
 githunter asset list --type asn
 ```
 
-GitHunter can also be the source of a pipeline. `asset export` writes canonical
-values only, one per line, with no table headings or status text:
+### Interoperability with security tools
+
+GitHunter follows standard input/output conventions so it fits into an
+authorized research workflow without wrapper scripts. `asset export` writes
+canonical values only—one value per line, with no headings or status text—so
+its output can be consumed directly by another command. `asset import -` reads
+newline-delimited output from standard input and preserves the named source as
+observation provenance.
+
+The following example discovers authorized subdomains, records them, probes
+only the in-scope subdomains, then records the resulting URLs:
 
 ```bash
-githunter asset export --scope in_scope | httpx -silent
-githunter asset export --type subdomain | your-tool
+# External tool -> GitHunter: record passive discovery output.
+subfinder -d target.example -silent \
+  | githunter asset import - --source subfinder
+
+# GitHunter -> external tool -> GitHunter: process only tracked in-scope assets.
+githunter asset export --type subdomain --scope in_scope \
+  | httpx -silent \
+  | githunter asset import - --source httpx
+```
+
+Use the same pattern with any compatible newline-based tool:
+
+```bash
+# Send a filtered canonical asset set to another local tool.
+githunter asset export --type subdomain --scope in_scope | your-tool
+
+# Retain provenance when importing a tool's output.
 some-tool | githunter asset import - --source some-tool
 ```
+
+Before running an external tool, define the authorized target and scope rules.
+GitHunter records and classifies observations; it does not grant authorization
+to an external command or infer permission for `UNKNOWN` assets.
 
 ASN values are canonicalized to forms such as `AS13335`. CIDRs are normalized to their network address, for example `192.168.1.99/24` becomes `192.168.1.0/24`.
 
