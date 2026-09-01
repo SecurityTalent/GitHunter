@@ -188,6 +188,47 @@ cat assets.txt | githunter asset import - --source pipeline
 Get-Content assets.txt | githunter asset import - --source pipeline
 ```
 
+### List and export assets
+
+Use `asset list` to review records in GitHunter. Without filters, it shows every
+tracked asset. Filter by type or source when you need a smaller view:
+
+```bash
+# Show all tracked assets.
+githunter asset list
+
+# Show only root domains or only subdomains.
+githunter asset list --type domain
+githunter asset list --type subdomain
+
+# Show assets recorded by httpx.
+githunter asset list --source httpx
+
+# `all` means every scope status; `50` limits the output to 50 results.
+githunter asset list --type domain all
+githunter asset list --type domain all 50
+```
+
+`--type` accepts `domain`, `subdomain`, `ip`, `ip_port`, `url`, `endpoint`,
+`asn`, `cidr`, or `unknown`. Scope values are `in_scope`, `out_of_scope`,
+`unknown`, or `all` (for list only). Source filters match the exact source
+identifier, so `--source httpx` does not include an unrelated source such as
+`my-httpx`.
+
+Use `asset export` when another tool needs clean values only, without headers
+or other GitHunter output:
+
+```bash
+# Export only approved subdomains.
+githunter asset export --type subdomain --scope in_scope
+
+# Send approved subdomains to httpx. This displays httpx output only.
+githunter asset export --type subdomain --scope in_scope | httpx -silent
+
+# Send approved subdomains to httpx and save its output back into GitHunter.
+githunter asset export --type subdomain --scope in_scope | httpx -silent | githunter asset import - --source httpx
+```
+
 ### Interoperability with security tools
 
 GitHunter follows standard input/output conventions so it fits into an
@@ -351,7 +392,7 @@ Snapshots track every supported asset type. Repeated observations update provena
 | `githunter scope check <value>` | Check whether an asset matches the defined scope. |
 | `githunter asset add <value>` | Record one observed asset. |
 | `githunter asset import [file|-]` | Add newline-separated assets to the project. Use a file name, such as `githunter asset import assets.txt`, or use `-` to read piped input, such as `Get-Content assets.txt \| githunter asset import -`. |
-| `githunter asset list` | List assets with type, scope, source, or JSON filters. |
+| `githunter asset list [scope] [limit]` | List assets with optional type, scope, source, JSON, and result-limit filters. Use `all 50` to include every scope status and show up to 50 results. |
 | `githunter asset export` | Write canonical values to stdout for another tool. |
 | `githunter tool add "<command>" --name <name>` | Save a command or pipeline. |
 | `githunter tool list` | List saved tool configurations. |

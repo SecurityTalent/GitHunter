@@ -147,6 +147,10 @@ pub enum AssetCommand {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+        /// Optional scope selector: all, in_scope, out_of_scope, or unknown.
+        scope_selector: Option<String>,
+        /// Maximum number of results to display.
+        limit: Option<usize>,
     },
     /// Write canonical asset values to stdout, one per line, for Unix pipelines.
     Export {
@@ -320,12 +324,15 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
                 scope,
                 source,
                 json,
+                scope_selector,
+                limit,
             } => asset_list(
                 &db,
                 asset_type.as_deref(),
-                scope.as_deref(),
+                resolve_list_scope(scope, scope_selector)?.as_deref(),
                 source.as_deref(),
                 json,
+                limit,
             ),
             AssetCommand::Export {
                 asset_type,
@@ -862,12 +869,50 @@ pub fn import_assets_from_reader<R: BufRead>(
     Ok(())
 }
 
+fn resolve_list_scope(
+    long_scope: Option<String>,
+    positional_scope: Option<String>,
+) -> Result<Option<String>> {
+    if long_scope.is_some() && positional_scope.is_some() {
+        bail!("use either --scope <status> or the positional scope selector, not both");
+    }
+
+    let Some(scope) = long_scope.or(positional_scope) else {
+        return Ok(None);
+    };
+    let normalized = scope.to_ascii_uppercase();
+    match normalized.as_str() {
+        "ALL" => Ok(None),
+        "IN_SCOPE" | "OUT_OF_SCOPE" | "UNKNOWN" => Ok(Some(normalized)),
+        _ => bail!("invalid scope '{scope}'; use all, in_scope, out_of_scope, or unknown"),
+    }
+}
+
+fn resolve_asset_type(asset_type: &str) -> Result<String> {
+    AssetType::parse(asset_type)
+        .map(|kind| kind.as_str().to_owned())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid asset type '{asset_type}'; use domain, subdomain, ip, ip_port, url, endpoint, asn, cidr, or unknown"
+            )
+        })
+}
+
+fn resolve_export_scope(scope: &str) -> Result<String> {
+    resolve_list_scope(Some(scope.to_owned()), None)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "asset export does not accept scope 'all'; omit --scope to export every scope status"
+        )
+    })
+}
+
 fn asset_list(
     db: &Connection,
     type_filter: Option<&str>,
     scope_filter: Option<&str>,
     source_filter: Option<&str>,
     json_output: bool,
+    limit: Option<usize>,
 ) -> Result<()> {
     let mut query = String::from(
         "SELECT a.id, a.asset_type, a.normalized_value, a.scope_status, a.first_seen, a.last_seen,
@@ -880,11 +925,8 @@ fn asset_list(
     let mut param_values: Vec<String> = Vec::new();
 
     if let Some(t) = type_filter {
-        let norm_t = AssetType::parse(t)
-            .map(|k| k.as_str().to_string())
-            .unwrap_or_else(|| t.to_ascii_lowercase());
         query.push_str("AND a.asset_type = ? ");
-        param_values.push(norm_t);
+        param_values.push(resolve_asset_type(t)?);
     }
 
     if let Some(s) = scope_filter {
@@ -892,14 +934,21 @@ fn asset_list(
         param_values.push(s.to_ascii_uppercase());
     }
 
-    query.push_str("GROUP BY a.id ");
-
     if let Some(src) = source_filter {
-        query.push_str("HAVING sources LIKE ? ");
-        param_values.push(format!("%{src}%"));
+        query.push_str(
+            "AND EXISTS (SELECT 1 FROM asset_observations source_observation WHERE source_observation.asset_id=a.id AND source_observation.source=?) ",
+        );
+        param_values.push(src.to_owned());
     }
 
-    query.push_str("ORDER BY a.asset_type, a.normalized_value");
+    query.push_str("GROUP BY a.id ");
+
+    query.push_str("ORDER BY a.asset_type, a.normalized_value ");
+
+    if let Some(max_results) = limit {
+        query.push_str("LIMIT ? ");
+        param_values.push(max_results.to_string());
+    }
 
     let mut stmt = db.prepare(&query)?;
     let params_ref: Vec<&dyn rusqlite::ToSql> = param_values
@@ -960,15 +1009,12 @@ fn asset_export(
     let mut query = String::from("SELECT DISTINCT a.normalized_value FROM assets a WHERE 1=1 ");
     let mut values: Vec<String> = Vec::new();
     if let Some(kind) = type_filter {
-        let kind = AssetType::parse(kind)
-            .map(|k| k.as_str().to_owned())
-            .unwrap_or_else(|| kind.to_ascii_lowercase());
         query.push_str("AND a.asset_type=? ");
-        values.push(kind);
+        values.push(resolve_asset_type(kind)?);
     }
     if let Some(scope) = scope_filter {
         query.push_str("AND a.scope_status=? ");
-        values.push(scope.to_ascii_uppercase());
+        values.push(resolve_export_scope(scope)?);
     }
     if let Some(source) = source_filter {
         query.push_str(

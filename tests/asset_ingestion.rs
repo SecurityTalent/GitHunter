@@ -30,6 +30,12 @@ fn mixed_asset_types_and_deduplication_workflow() {
 
     githunter()
         .current_dir(dir.path())
+        .args(["scope", "add", "target.com"])
+        .assert()
+        .success();
+
+    githunter()
+        .current_dir(dir.path())
         .args(["scope", "out", "add", "admin.target.com"])
         .assert()
         .success();
@@ -42,6 +48,15 @@ fn mixed_asset_types_and_deduplication_workflow() {
         .success()
         .stdout(predicate::str::contains(
             "Added asset: api.target.com (SUBDOMAIN, IN_SCOPE)",
+        ));
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "add", "target.com", "--source", "manual-test"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Added asset: target.com (DOMAIN, IN_SCOPE)",
         ));
 
     // 2. Test mixed asset file import
@@ -115,6 +130,14 @@ fn mixed_asset_types_and_deduplication_workflow() {
         .success()
         .stdout(predicate::str::contains("api.target.com"))
         .stdout(predicate::str::contains("dev.target.com"));
+
+    // Positional `all` means no scope filter; the following number limits rows.
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list", "--type", "domain", "all", "50"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("target.com"));
 
     githunter()
         .current_dir(dir.path())
@@ -214,4 +237,71 @@ fn asset_export_is_clean_pipeline_output() {
         .assert()
         .success()
         .stdout("one.example.com\ntwo.example.com\n");
+}
+
+#[test]
+fn requested_asset_list_export_and_httpx_import_workflow() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "pipeline-test"])
+        .assert()
+        .success();
+    for rule in ["example.com", "*.example.com"] {
+        githunter()
+            .current_dir(dir.path())
+            .args(["scope", "add", rule])
+            .assert()
+            .success();
+    }
+    for value in ["example.com", "api.example.com", "www.example.com"] {
+        githunter()
+            .current_dir(dir.path())
+            .args(["asset", "add", value, "--source", "manual"])
+            .assert()
+            .success();
+    }
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("api.example.com"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list", "--type", "domain", "all", "50"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("example.com"));
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "asset",
+            "export",
+            "--type",
+            "subdomain",
+            "--scope",
+            "in_scope",
+        ])
+        .assert()
+        .success()
+        .stdout("api.example.com\nwww.example.com\n");
+
+    // This is the final stage of `asset export | httpx -silent | asset import -`.
+    // A URL is representative of httpx's silent output and proves stdin ingestion.
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "import", "-", "--source", "httpx"])
+        .write_stdin("https://api.example.com\nhttps://www.example.com\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("New assets: 2"));
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list", "--source", "httpx"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("https://api.example.com"))
+        .stdout(predicate::str::contains("https://www.example.com"));
 }
