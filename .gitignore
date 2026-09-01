@@ -1,0 +1,32 @@
+# Rust & Cargo Build Artifacts
+target/
+**/*.rs.bk
+Cargo.lock.tmp
+
+# GitHunter Local Research Database & Storage
+.githunter/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Environment and Secrets
+.env
+.env.*
+*.pem
+*.key
+
