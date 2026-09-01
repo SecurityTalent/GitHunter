@@ -74,6 +74,7 @@ githunter scope add "target.com"
 githunter scope add "*.target.com"
 githunter asset import assets.txt --source manual
 githunter snapshot create --note "Baseline"
+# Display the current project name and the totals for tracked assets and snapshots.
 githunter status
 ```
 
@@ -221,7 +222,7 @@ Snapshots track every supported asset type. Repeated observations update provena
 | `githunter workflow run <name>` | Explicitly run a saved workflow. |
 | `githunter snapshot create` | Create an immutable snapshot. |
 | `githunter diff` | Compare the latest two snapshots. |
-| `githunter status` | Show the current research-state summary. |
+| `githunter status` | Show the project name and current totals for tracked assets and snapshots. |
 | `githunter timeline` | Show the local audit timeline. |
 
 ## Documentation
