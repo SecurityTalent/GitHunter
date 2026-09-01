@@ -8,16 +8,45 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "githunter",
+    bin_name = "githunter",
+    term_width = 100,
+    disable_help_flag = true,
     version,
-    about = "Offline Security Research Version Control",
-    long_about = "GitHunter records authorized security research locally. External tools run only after an explicit, auditable command."
+    author = "SecurityTalent.net <https://securitytalent.net>",
+    about = r#"
+   ____ _ _   _   _             _
+  / ___(_) |_| | | |_   _ _ __ | |_ ___ _ __
+ | |  _| | __| |_| | | | | '_ \| __/ _ \ '__|
+ | |_| | | |_|  _  | |_| | | | | ||  __/ |
+  \____|_|\__|_| |_|\__,_|_| |_|\__\___|_|
+
+  securitytalent.net                              v1.0.0
+"#,
+    long_about = r#"
+   ____ _ _   _   _             _
+  / ___(_) |_| | | |_   _ _ __ | |_ ___ _ __
+ | |  _| | __| |_| | | | | '_ \| __/ _ \ '__|
+ | |_| | | |_|  _  | |_| | | | | ||  __/ |
+  \____|_|\__|_| |_|\__,_|_| |_|\__\___|_|
+
+  securitytalent.net                              v1.0.0
+"#
 )]
 pub struct Cli {
-    /// Use an explicit project directory instead of the current directory.
+    /// Print help.
+    #[arg(
+        short = 'h',
+        long,
+        action = clap::ArgAction::HelpShort,
+        global = true
+    )]
+    pub help: Option<bool>,
+
+    /// Project directory (default: current directory).
     #[arg(long, global = true, value_name = "PATH")]
     pub repo: Option<PathBuf>,
 
-    /// Disable ANSI color output.
+    /// Disable color output.
     #[arg(long, global = true)]
     pub no_color: bool,
 

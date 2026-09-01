@@ -1,3 +1,12 @@
+<p align="center">
+  <img src="src/asset/logo.png" alt="GitHunter - local-first security research workspace" width="560">
+</p>
+
+<p align="center">
+  <strong>Local-first security research workspace for authorized engagements.</strong><br>
+  A <a href="https://securitytalent.net">SecurityTalent.net</a> product.
+</p>
+
 # GitHunter
 
 GitHunter is an offline, local-first command-line tool for authorized security research. It records scope, observed assets, provenance, immutable snapshots, and changes over time in a portable `.githunter/` repository.
