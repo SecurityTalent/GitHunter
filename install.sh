@@ -1,41 +1,64 @@
-﻿#!/usr/bin/env bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🎯 Installing GitHunter globally..."
+REPOSITORY_URL="https://github.com/SecurityTalent/GitHunter.git"
+INSTALL_DIR="${GITHUNTER_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
+TEMPORARY_DIR="$(mktemp -d)"
 
-# Check dependencies
-if ! command -v git >/dev/null 2>&1; then
-    echo "❌ Error: git is required to install GitHunter."
-    exit 1
-fi
+cleanup() {
+    rm -rf "$TEMPORARY_DIR"
+}
+trap cleanup EXIT
 
-if ! command -v cargo >/dev/null 2>&1; then
-    echo "❌ Error: Rust & Cargo are required. Install Rust via: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    exit 1
-fi
+require_command() {
+    local command_name="$1"
+    local install_hint="$2"
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Error: $command_name is required. $install_hint" >&2
+        exit 1
+    fi
+}
 
-TMP_DIR=$(mktemp -d)
-echo "📥 Cloning GitHunter repository..."
-git clone --depth 1 https://github.com/SecurityTalent/GitHunter.git "$TMP_DIR"
-cd "$TMP_DIR"
+add_path_to_profile() {
+    local profile_file="$1"
+    local path_line="export PATH=\"$INSTALL_DIR:\$PATH\""
 
-echo "⚙️ Building release binary..."
-cargo build --release
+    touch "$profile_file"
+    if ! grep -Fqx "$path_line" "$profile_file"; then
+        {
+            printf '\n# GitHunter CLI\n'
+            printf '%s\n' "$path_line"
+        } >> "$profile_file"
+    fi
+}
 
-INSTALL_DIR="/usr/local/bin"
-echo "📦 Installing binary to $INSTALL_DIR/githunter..."
+require_command git "Install Git, then run this script again."
+require_command cargo "Install Rust and Cargo from https://rustup.rs/, then run this script again."
 
-if [ -w "$INSTALL_DIR" ]; then
-    cp target/release/githunter "$INSTALL_DIR/githunter"
-    chmod +x "$INSTALL_DIR/githunter"
-else
-    echo "🔑 Sudo privileges required to copy to $INSTALL_DIR:"
-    sudo cp target/release/githunter "$INSTALL_DIR/githunter"
-    sudo chmod +x "$INSTALL_DIR/githunter"
-fi
+echo "Installing GitHunter globally for the current user..."
+echo "Cloning GitHunter..."
+git clone --depth 1 "$REPOSITORY_URL" "$TEMPORARY_DIR/repository"
 
-rm -rf "$TMP_DIR"
+echo "Building release binary..."
+cargo build --release --manifest-path "$TEMPORARY_DIR/repository/Cargo.toml"
 
-echo ""
-echo "✨ GitHunter has been installed successfully!"
-echo "🚀 Try running: githunter --help"
+mkdir -p "$INSTALL_DIR"
+install -m 755 "$TEMPORARY_DIR/repository/target/release/githunter" "$INSTALL_DIR/githunter"
+
+case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ;;
+    *) export PATH="$INSTALL_DIR:$PATH" ;;
+esac
+
+# Login shells read .profile; typical terminal Bash/Zsh sessions read the
+# shell-specific file. Update both paths that apply to the user's default shell.
+add_path_to_profile "$HOME/.profile"
+case "${SHELL:-}" in
+    */bash) add_path_to_profile "$HOME/.bashrc" ;;
+    */zsh) add_path_to_profile "$HOME/.zshrc" ;;
+esac
+
+echo
+echo "GitHunter installed successfully at $INSTALL_DIR/githunter"
+echo "This terminal is ready now: githunter --help"
+echo "Open a new terminal to use githunter from any directory."

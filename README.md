@@ -55,6 +55,26 @@ export PATH="$HOME/.cargo/bin:$PATH"
 Add the same line to your shell profile (for example, `~/.bashrc` or `~/.zshrc`)
 to make it persistent.
 
+### Linux (global command)
+
+From a clone of this repository, run:
+
+```bash
+./install.sh
+```
+
+The installer builds GitHunter, installs it for the current user in
+`~/.local/bin`, and permanently adds that directory to `PATH` for login shells
+and the user's Bash or Zsh terminal. Open a new terminal, then run it from any
+directory:
+
+```bash
+githunter --help
+```
+
+Git and Rust/Cargo are required. Set `GITHUNTER_INSTALL_DIR` before running
+the installer if you need a different installation directory.
+
 ### Windows (global command)
 
 From a clone of this repository, run the PowerShell installer:
