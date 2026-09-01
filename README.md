@@ -18,11 +18,43 @@
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Installation
 
-### 1. Build and Install
+### ⚡ One-Command Global Install (Linux & macOS)
 
-Make sure you have **Rust 1.78+** installed:
+Run either of the following commands in your terminal to install `githunter` globally:
+
+#### Option A: Via One-Line Install Script (Recommended)
+```bash
+curl -sSf https://raw.githubusercontent.com/SecurityTalent/GitHunter/main/install.sh | bash
+```
+
+#### Option B: Via Cargo (Direct from GitHub)
+```bash
+cargo install --git https://github.com/SecurityTalent/GitHunter.git
+```
+
+#### Option C: One-Liner Bash Command
+```bash
+git clone https://github.com/SecurityTalent/GitHunter.git /tmp/GitHunter && cd /tmp/GitHunter && cargo build --release && sudo install -m 755 target/release/githunter /usr/local/bin/ && cd ~ && rm -rf /tmp/GitHunter
+```
+
+*After installation, `githunter` will be accessible from anywhere in your terminal!*
+
+---
+
+### 🪟 Windows Installation
+
+Open **PowerShell** and run:
+
+```powershell
+cargo install --git https://github.com/SecurityTalent/GitHunter.git
+```
+*(Ensure `%USERPROFILE%\.cargo\bin` is in your system PATH)*
+
+---
+
+### 🔨 Manual Build from Source
 
 ```bash
 # Clone the repository
@@ -32,12 +64,14 @@ cd GitHunter
 # Build release binary
 cargo build --release
 
-# (Optional) Add to PATH or copy to bin
-cp target/release/githunter /usr/local/bin/   # Linux/macOS
-# On Windows, add .\target\release\ to your Environment PATH
+# Copy binary to system PATH
+sudo cp target/release/githunter /usr/local/bin/   # Linux / macOS
+# On Windows, copy target\release\githunter.exe to your PATH folder
 ```
 
 ---
+
+## ⚡ Quickstart Guide
 
 ### 2. Basic Workflow
 
