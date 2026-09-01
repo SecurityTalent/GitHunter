@@ -403,7 +403,8 @@ Open a second terminal in the project directory and run:
 githunter watch
 ```
 
-The dashboard refreshes every five seconds and shows targets, scope rules,
+The dashboard refreshes the same screen every five seconds (rather than
+printing a new dashboard block) and shows targets, scope rules,
 asset totals by scope and type, snapshots, configured tools, and the eight most
 recent local timeline events. It is read-only: it never launches `httpx` or any
 other external tool. Stop it with `Ctrl+C`; use `--interval 2` for a two-second

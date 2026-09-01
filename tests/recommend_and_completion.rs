@@ -90,3 +90,20 @@ fn watch_once_renders_a_read_only_dashboard() {
         .stdout(predicate::str::contains("subdomain"))
         .stdout(predicate::str::contains("Read-only monitor"));
 }
+
+#[test]
+fn watch_once_is_plain_text_for_scripts() {
+    let dir = tempdir().expect("tempdir");
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "watch-once-test"])
+        .assert()
+        .success();
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["watch", "--once"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\u{1b}[2J").not());
+}

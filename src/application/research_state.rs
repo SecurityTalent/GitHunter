@@ -1759,9 +1759,12 @@ fn watch(repo_dir: &Path, db: &Connection, interval_seconds: u64, once: bool) ->
     if interval_seconds == 0 {
         bail!("--interval must be at least 1 second");
     }
-    let interactive_terminal = io::stdout().is_terminal();
     loop {
-        if interactive_terminal {
+        // A number of terminal hosts expose stdout as a redirected stream even
+        // though they still interpret ANSI control sequences.  Do not gate the
+        // refresh on `is_terminal()` or those hosts append a full dashboard on
+        // every interval. `--once` remains plain text for scripts.
+        if !once {
             print!("\x1b[2J\x1b[H");
         }
         watch_frame(repo_dir, db, interval_seconds)?;
