@@ -8,9 +8,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Child, Output, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
@@ -239,8 +243,8 @@ pub enum ToolCommand {
         /// Select the first project asset with this scope status (e.g. in_scope).
         #[arg(long)]
         scope: Option<String>,
-        /// Ingest tool stdout directly into GitHunter assets
-        #[arg(long, default_value_t = true)]
+        /// Do not ingest tool stdout into GitHunter assets.
+        #[arg(long = "no-import", action = clap::ArgAction::SetFalse, default_value_t = true)]
         import: bool,
     },
 }
@@ -364,72 +368,82 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
                 source.as_deref(),
             ),
         },
-        P0Command::Tool(args) => match args.command {
-            ToolCommand::List => tool_list(&repo_dir, &db),
-            ToolCommand::Show { name } => tool_show(&repo_dir, &db, &name),
-            ToolCommand::Explain { name } => tool_explain(&repo_dir, &db, &name),
-            ToolCommand::Add {
-                command,
-                name,
-                executable,
-                description,
-                args,
-                input_type,
-                output_type,
-                tags,
-                timeout,
-                file,
-            } => {
-                let tool = if let Some(file_path) = file {
-                    let content = fs::read_to_string(&file_path)?;
-                    toml::from_str::<ToolDefinition>(&content)?
-                } else {
-                    let pipeline = command.as_deref().map(parse_pipeline).transpose()?;
-                    let (executable, arguments) = if let Some(stages) = pipeline {
-                        (stages[0][0].clone(), stages[0][1..].to_vec())
+        P0Command::Tool(args) => {
+            match args.command {
+                ToolCommand::List => tool_list(&repo_dir, &db),
+                ToolCommand::Show { name } => tool_show(&repo_dir, &db, &name),
+                ToolCommand::Explain { name } => tool_explain(&repo_dir, &db, &name),
+                ToolCommand::Add {
+                    command,
+                    name,
+                    executable,
+                    description,
+                    args,
+                    input_type,
+                    output_type,
+                    tags,
+                    timeout,
+                    file,
+                } => {
+                    let tool = if let Some(file_path) = file {
+                        let content = fs::read_to_string(&file_path)?;
+                        toml::from_str::<ToolDefinition>(&content)?
                     } else {
-                        (executable, args)
+                        let pipeline = command.as_deref().map(parse_pipeline).transpose()?;
+                        let (executable, arguments) = if let Some(stages) = pipeline {
+                            (stages[0][0].clone(), stages[0][1..].to_vec())
+                        } else {
+                            (executable, args)
+                        };
+                        ToolDefinition {
+                            name,
+                            description,
+                            executable,
+                            arguments,
+                            input_type,
+                            output_type,
+                            enabled: true,
+                            timeout_seconds: timeout,
+                            tags,
+                            command: command.unwrap_or_default(),
+                        }
                     };
-                    ToolDefinition {
-                        name,
-                        description,
-                        executable,
-                        arguments,
-                        input_type,
-                        output_type,
-                        enabled: true,
-                        timeout_seconds: timeout,
-                        tags,
-                        command: command.unwrap_or_default(),
-                    }
-                };
-                tool_add(&repo_dir, &mut db, tool)
-            }
-            ToolCommand::Remove { name } => tool_remove(&repo_dir, &mut db, &name),
-            ToolCommand::Validate { name } => tool_validate(&repo_dir, &db, &name),
-            ToolCommand::Run {
-                name,
-                target,
-                asset,
-                file,
-                stdin,
-                scope,
-                import,
-            } => {
-                let selected_target = resolve_run_value(
-                    &db,
-                    target.or(asset),
-                    file.as_deref(),
+                    tool_add(&repo_dir, &mut db, tool)
+                }
+                ToolCommand::Remove { name } => tool_remove(&repo_dir, &mut db, &name),
+                ToolCommand::Validate { name } => tool_validate(&repo_dir, &db, &name),
+                ToolCommand::Run {
+                    name,
+                    target,
+                    asset,
+                    file,
                     stdin,
-                    scope.as_deref(),
-                )?;
-                if name == "all" {
-                    tool_run_all(&repo_dir, &mut db, Some(&selected_target), import)
-                } else {
-                    tool_run(&repo_dir, &mut db, &name, Some(&selected_target), import)
+                    scope,
+                    import,
+                } => {
+                    let input_count = usize::from(target.is_some())
+                        + usize::from(asset.is_some())
+                        + usize::from(file.is_some())
+                        + usize::from(stdin)
+                        + usize::from(scope.is_some());
+                    if input_count > 1 {
+                        bail!("use only one input option: --target, --asset, --file, --stdin, or --scope");
+                    }
+                    let selected_target = resolve_run_value(
+                        &db,
+                        target.or(asset),
+                        file.as_deref(),
+                        stdin,
+                        scope.as_deref(),
+                    )?;
+                    if name == "all" {
+                        tool_run_all(&repo_dir, &mut db, Some(&selected_target), import)
+                    } else {
+                        tool_run(&repo_dir, &mut db, &name, Some(&selected_target), import)
+                    }
                 }
             }
-        },
+        }
         P0Command::Workflow(args) => match args.command {
             WorkflowCommand::List => workflow_list(&repo_dir, &db),
             WorkflowCommand::Show { name } => workflow_show(&repo_dir, &db, &name),
@@ -1235,6 +1249,129 @@ fn check_executable_exists(executable: &str) -> bool {
     false
 }
 
+/// A small terminal-only indicator. It writes to stderr so tool stdout stays
+/// clean for asset ingestion and pipelines.
+struct ToolProgress {
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+    label: String,
+    started: Instant,
+}
+
+impl ToolProgress {
+    fn start(label: impl Into<String>) -> Option<Self> {
+        if !io::stderr().is_terminal() {
+            return None;
+        }
+        let label = label.into();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let worker_label = label.clone();
+        let started = Instant::now();
+        let worker_started = started;
+        let worker = thread::spawn(move || {
+            let frames = ['|', '/', '-', '\\'];
+            let mut index = 0usize;
+            let mut stderr = io::stderr();
+            while !worker_stop.load(Ordering::Relaxed) {
+                let seconds = worker_started.elapsed().as_secs();
+                let _ = write!(
+                    stderr,
+                    "\r  {} Running {} ({}s) — Ctrl+C to stop",
+                    frames[index % frames.len()],
+                    worker_label,
+                    seconds
+                );
+                let _ = stderr.flush();
+                index += 1;
+                thread::sleep(Duration::from_millis(120));
+            }
+        });
+        Some(Self {
+            stop,
+            worker: Some(worker),
+            label,
+            started,
+        })
+    }
+
+    fn finish(mut self, result: &str) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        eprintln!(
+            "\r  {} {} after {}s                              ",
+            result,
+            self.label,
+            self.started.elapsed().as_secs()
+        );
+    }
+}
+
+/// Waits for a tool without allowing a verbose stdout/stderr stream to block
+/// the child process. A configured timeout terminates the child cleanly.
+fn wait_for_tool(
+    mut child: Child,
+    label: &str,
+    timeout_seconds: Option<u64>,
+) -> Result<(Output, bool)> {
+    // Close stdin before waiting so commands that read until EOF can finish.
+    drop(child.stdin.take());
+    let mut stdout = child
+        .stdout
+        .take()
+        .context("could not capture tool stdout")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .context("could not capture tool stderr")?;
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let progress = ToolProgress::start(label.to_owned());
+    let started = Instant::now();
+    let timed_out = loop {
+        if child.try_wait()?.is_some() {
+            break false;
+        }
+        if timeout_seconds.is_some_and(|limit| started.elapsed() >= Duration::from_secs(limit)) {
+            child.kill()?;
+            break true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let status = child.wait()?;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("tool stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("tool stderr reader panicked"))??;
+    if let Some(progress) = progress {
+        progress.finish(if timed_out {
+            "Timed out"
+        } else if status.success() {
+            "Completed"
+        } else {
+            "Failed"
+        });
+    }
+    Ok((
+        Output {
+            status,
+            stdout,
+            stderr,
+        },
+        timed_out,
+    ))
+}
+
 fn tool_run(
     repo_dir: &Path,
     db: &mut Connection,
@@ -1283,35 +1420,48 @@ fn tool_run(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().with_context(|| {
+    let child = cmd.spawn().with_context(|| {
         format!(
             "failed to start executable '{}'. Ensure it is installed and in PATH.",
             tool.executable
         )
     })?;
 
-    let mut stdout_bytes = Vec::new();
-    if let Some(mut out) = child.stdout.take() {
-        out.read_to_end(&mut stdout_bytes)?;
-    }
-
-    let mut stderr_bytes = Vec::new();
-    if let Some(mut err) = child.stderr.take() {
-        err.read_to_end(&mut stderr_bytes)?;
-    }
-
-    let status = child.wait()?;
-    if !status.success() {
-        let err_msg = String::from_utf8_lossy(&stderr_bytes);
-        eprintln!("Tool execution exited with status {status}. Stderr:\n{err_msg}");
+    let (output, timed_out) = wait_for_tool(
+        child,
+        &format!("{} for {}", tool.name, target_val),
+        tool.timeout_seconds,
+    )?;
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "Tool execution exited with status {}. Stderr:\n{err_msg}",
+            output.status
+        );
     }
 
     event(db, "tool.executed", "tool", &tool.name)?;
 
-    if import_output && !stdout_bytes.is_empty() {
+    if timed_out {
+        bail!(
+            "tool '{}' timed out after {} second(s)",
+            tool.name,
+            tool.timeout_seconds.unwrap_or_default()
+        );
+    }
+
+    if !output.status.success() {
+        bail!(
+            "tool '{}' failed with exit status {}",
+            tool.name,
+            output.status
+        );
+    }
+
+    if import_output && !output.stdout.is_empty() {
         println!();
         println!("📥 Ingesting tool output into GitHunter asset pipeline...");
-        import_assets_from_reader(db, std::io::Cursor::new(stdout_bytes), &tool.name)?;
+        import_assets_from_reader(db, std::io::Cursor::new(output.stdout), &tool.name)?;
     }
 
     Ok(())
@@ -1383,10 +1533,25 @@ fn tool_run_pipeline(
                 .context("could not open stage stdin")?
                 .write_all(&input)?;
         }
-        let result = child.wait_with_output()?;
+        let stage_label = format!(
+            "{} — stage {}/{} ({})",
+            tool.name,
+            index + 1,
+            stages.len(),
+            stage[0]
+        );
+        let (result, timed_out) = wait_for_tool(child, &stage_label, tool.timeout_seconds)?;
         code = result.status.code();
         stderr.extend_from_slice(&result.stderr);
         input = result.stdout;
+        if timed_out {
+            bail!(
+                "pipeline '{}' timed out after {} second(s) at stage {}",
+                tool.name,
+                tool.timeout_seconds.unwrap_or_default(),
+                index + 1
+            );
+        }
         if !result.status.success() {
             break;
         }

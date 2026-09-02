@@ -417,10 +417,7 @@ mod tests {
             normalize_pattern("*.Example.COM.").unwrap(),
             "*.example.com"
         );
-        assert_eq!(
-            normalize_pattern("*Example.COM").unwrap(),
-            "*.example.com"
-        );
+        assert_eq!(normalize_pattern("*Example.COM").unwrap(), "*.example.com");
         assert!(normalize_pattern("*").is_err());
     }
 

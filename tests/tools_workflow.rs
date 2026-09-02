@@ -153,13 +153,7 @@ fn saved_pipeline_is_explicit_and_shell_syntax_is_rejected() {
         .success();
     githunter()
         .current_dir(dir.path())
-        .args([
-            "tool",
-            "add",
-            pipeline_command,
-            "--name",
-            "pipe",
-        ])
+        .args(["tool", "add", pipeline_command, "--name", "pipe"])
         .assert()
         .success();
     githunter()
@@ -221,4 +215,122 @@ fn saved_pipeline_is_explicit_and_shell_syntax_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("shell operators"));
+}
+
+#[test]
+fn tool_run_options_are_enforced() {
+    let dir = tempdir().expect("tempdir");
+    #[cfg(windows)]
+    let (echo_executable, echo_args) = ("cmd", "/c echo {target}");
+    #[cfg(not(windows))]
+    let (echo_executable, echo_args) = ("echo", "{target}");
+    #[cfg(windows)]
+    let (slow_executable, slow_args) = ("cmd", "/c ping 127.0.0.1 -n 3");
+    #[cfg(not(windows))]
+    let (slow_executable, slow_args) = ("sleep", "2");
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["init", "--name", "tool-options"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["target", "add", "example.com"])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "add",
+            "--name",
+            "echo-no-import",
+            "--executable",
+            echo_executable,
+            "--args",
+            echo_args,
+        ])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "run",
+            "echo-no-import",
+            "--target",
+            "unrecorded.example.com",
+            "--no-import",
+        ])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unrecorded.example.com").not());
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "run",
+            "echo-no-import",
+            "--target",
+            "example.com",
+            "--asset",
+            "api.example.com",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("use only one input option"));
+
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "add",
+            "--name",
+            "slow-tool",
+            "--executable",
+            slow_executable,
+            "--args",
+            slow_args,
+            "--timeout",
+            "1",
+        ])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "slow-tool"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("timed out after 1 second"));
+
+    #[cfg(windows)]
+    let (failing_executable, failing_args) = ("cmd", "/c exit 7");
+    #[cfg(not(windows))]
+    let (failing_executable, failing_args) = ("false", "");
+    githunter()
+        .current_dir(dir.path())
+        .args([
+            "tool",
+            "add",
+            "--name",
+            "failing-tool",
+            "--executable",
+            failing_executable,
+            "--args",
+            failing_args,
+        ])
+        .assert()
+        .success();
+    githunter()
+        .current_dir(dir.path())
+        .args(["tool", "run", "failing-tool"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed with exit status"));
 }

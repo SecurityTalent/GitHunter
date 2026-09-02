@@ -41,6 +41,23 @@ Cargo's program folder to PATH:
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+### Make `githunter` available system-wide
+
+Cargo installs GitHunter at `~/.cargo/bin/githunter`. Keeping that directory in
+your `PATH` is the recommended approach: it updates naturally when you run
+`cargo install` again. If you specifically need one shared system command,
+copy the installed binary to `/usr/local/bin` (not `/usr/bin`, which is usually
+managed by the operating system):
+
+```bash
+sudo install -m 0755 "$HOME/.cargo/bin/githunter" /usr/local/bin/githunter
+githunter --version
+```
+
+There is no separate `chmod` command needed: `install -m 0755` copies the file
+and sets its executable permission in one step. Re-run that command after each
+`cargo install` update when using the system-wide copy.
+
 To use the code in this repository instead of the installed version:
 
 ```bash
@@ -343,7 +360,7 @@ githunter tool run <tool-name> --asset <asset>
 githunter tool run <tool-name> --file inputs.txt
 printf 'api.example.com\n' | githunter tool run <tool-name> --stdin
 githunter tool run <tool-name> --scope in_scope
-githunter tool run <tool-name> --target <target> --import
+githunter tool run <tool-name> --target <target> --no-import
 
 # Remove a saved tool.
 githunter tool remove <tool-name>
@@ -353,8 +370,14 @@ githunter tool remove <tool-name>
 `--output-type` accepts `lines` or `json`. `--tags` takes comma-separated
 names. Tool output is imported by default when a tool runs.
 
-For a run, choose one value source: `--target`, `--asset`, `--file`, `--stdin`,
-or `--scope`. `--import` records stdout as assets; it is enabled by default.
+For a run, choose only one value source: `--target`, `--asset`, `--file`,
+`--stdin`, or `--scope`. Tool stdout is recorded as assets by default; add
+`--no-import` when you only want to see that tool's result.
+
+While a saved tool runs, GitHunter shows a live `Running` line with elapsed
+time. It shows `Completed`, `Failed`, or `Timed out` when the command ends.
+Use `--timeout <seconds>` when saving a tool to stop a command that takes too
+long. Press `Ctrl+C` to stop a running command yourself.
 
 ### Workflows
 

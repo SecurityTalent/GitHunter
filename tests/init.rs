@@ -63,7 +63,9 @@ fn init_accepts_blank_setup_answers_and_shorthand_wildcards() {
         .write_stdin("blank-project\n\n\n*hackerone.com\n\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialized GitHunter repository."));
+        .stdout(predicate::str::contains(
+            "Initialized GitHunter repository.",
+        ));
 
     let mut scopes = Command::cargo_bin("githunter").expect("githunter binary");
     scopes
