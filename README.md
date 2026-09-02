@@ -64,21 +64,15 @@ To use the code in this repository instead of the installed version:
 cargo run -- --help
 ```
 
-### Update GitHunter on Kali
+### Manual install or update
 
-If `githunter` shows old behaviour, run these commands from this project
-folder:
+From this repository, build and install the latest local version:
 
 ```bash
-cd /mnt/c/Users/user/Desktop/hunter
 cargo build --release
-sudo cp target/release/githunter /usr/local/bin/githunter
-hash -r # Tell the terminal to use the new command.
+sudo install -m 0755 target/release/githunter /usr/local/bin/githunter
 githunter --version
 ```
-
-This replaces the GitHunter command with the newly built version. Do not use
-`mv`: it removes the original file instead of copying the new one.
 
 ## Start here: your first project
 
