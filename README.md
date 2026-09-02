@@ -21,57 +21,26 @@ work where you have permission.
 
 ## Install on Kali / WSL
 
-You need Rust first. Then run:
+Install with Cargo:
 
 ```bash
 cargo install --git https://github.com/SecurityTalent/GitHunter.git --locked
-```
-
-Check that it works:
-
-```bash
-githunter --version
 githunter --help
 ```
 
-If `githunter: command not found` appears, open a new terminal. If needed, add
-Cargo's program folder to PATH:
+If the command is not found, add Cargo to your PATH:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-### Make `githunter` available system-wide
-
-Cargo installs GitHunter at `~/.cargo/bin/githunter`. Keeping that directory in
-your `PATH` is the recommended approach: it updates naturally when you run
-`cargo install` again. If you specifically need one shared system command,
-copy the installed binary to `/usr/local/bin` (not `/usr/bin`, which is usually
-managed by the operating system):
+### Build from source
 
 ```bash
-sudo install -m 0755 "$HOME/.cargo/bin/githunter" /usr/local/bin/githunter
-githunter --version
-```
-
-There is no separate `chmod` command needed: `install -m 0755` copies the file
-and sets its executable permission in one step. Re-run that command after each
-`cargo install` update when using the system-wide copy.
-
-To use the code in this repository instead of the installed version:
-
-```bash
-cargo run -- --help
-```
-
-### Manual install or update
-
-From this repository, build and install the latest local version:
-
-```bash
+git clone https://github.com/SecurityTalent/GitHunter.git
+cd GitHunter
 cargo build --release
-sudo install -m 0755 target/release/githunter /usr/local/bin/githunter
-githunter --version
+./target/release/githunter --help
 ```
 
 ## Start here: your first project
