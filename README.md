@@ -128,6 +128,16 @@ githunter asset list
 GitHunter accepts domains, subdomains, IP addresses, IP:port values, URLs,
 paths, ASNs (for example `AS13335`), and CIDRs.
 
+After an import, GitHunter reports how many values were imported, newly added,
+or already known, plus a type and scope summary. View one asset type at a time:
+
+```bash
+githunter asset list --type ip
+githunter asset list --type url
+githunter asset list --type asn
+githunter asset list --type cidr
+```
+
 ### 3. Save a baseline and find changes
 
 ```bash
