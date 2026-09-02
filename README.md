@@ -194,6 +194,22 @@ githunter tool run subfinder-passive --target example.com
 not pass saved commands to a shell, and rejects shell operators such as `;`
 and `>`.
 
+### How saved tools work
+
+```mermaid
+flowchart LR
+    A[Authorized target] --> B[Saved tool command]
+    B --> C[Live terminal status]
+    C --> D{Import output?}
+    D -->|Default| E[GitHunter assets]
+    D -->|--no-import| F[View result only]
+    E --> G[Snapshots and diff]
+```
+
+`githunter tool run` is always explicit: saving a command never executes it.
+During a run, the terminal shows elapsed time and finishes with `Completed`,
+`Failed`, or `Timed out`.
+
 ## Quick command guide
 
 | If you want to... | Use this command |
@@ -342,7 +358,8 @@ For a run, choose only one value source: `--target`, `--asset`, `--file`,
 While a saved tool runs, GitHunter shows a live `Running` line with elapsed
 time. It shows `Completed`, `Failed`, or `Timed out` when the command ends.
 Use `--timeout <seconds>` when saving a tool to stop a command that takes too
-long. Press `Ctrl+C` to stop a running command yourself.
+long; the value must be at least `1`. Press `Ctrl+C` to stop a running command
+yourself.
 
 ### Workflows
 

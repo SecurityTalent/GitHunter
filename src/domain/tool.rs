@@ -56,6 +56,9 @@ impl ToolDefinition {
         if !self.command.trim().is_empty() {
             parse_pipeline(&self.command)?;
         }
+        if self.timeout_seconds == Some(0) {
+            bail!("tool timeout must be at least 1 second");
+        }
         // Validate input and output types
         let input = self.input_type.trim().to_ascii_lowercase();
         if !["target", "scope", "file", "stdin", "none"].contains(&input.as_str()) {
@@ -198,6 +201,12 @@ mod tests {
 
         let resolved = tool.resolve_arguments("example.com", &[]);
         assert_eq!(resolved, vec!["-d", "example.com", "-silent"]);
+
+        let zero_timeout = ToolDefinition {
+            timeout_seconds: Some(0),
+            ..tool
+        };
+        assert!(zero_timeout.validate().is_err());
     }
 
     #[test]
