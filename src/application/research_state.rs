@@ -132,8 +132,21 @@ pub enum ScopeOutCommand {
 
 #[derive(Debug, Args)]
 pub struct AssetArgs {
+    /// A shortcut for `asset list`: filter the returned asset type.
+    #[arg(long = "type")]
+    asset_type: Option<String>,
+    /// A shortcut for `asset list`: filter by scope status.
+    #[arg(long)]
+    scope: Option<String>,
+    /// A shortcut for `asset list`: filter by observation source.
+    #[arg(long)]
+    source: Option<String>,
+    /// A shortcut for `asset list`: output JSON.
+    #[arg(long)]
+    json: bool,
+    /// An explicit asset operation. Omit it to list assets.
     #[command(subcommand)]
-    command: AssetCommand,
+    command: Option<AssetCommand>,
 }
 #[derive(Debug, Subcommand)]
 pub enum AssetCommand {
@@ -338,18 +351,18 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
             }
         },
         P0Command::Asset(args) => match args.command {
-            AssetCommand::Add { value, source } => asset_add(&mut db, &value, &source),
-            AssetCommand::Import { file, source } => {
+            Some(AssetCommand::Add { value, source }) => asset_add(&mut db, &value, &source),
+            Some(AssetCommand::Import { file, source }) => {
                 asset_import(&mut db, file.as_deref(), &source)
             }
-            AssetCommand::List {
+            Some(AssetCommand::List {
                 asset_type,
                 scope,
                 source,
                 json,
                 scope_selector,
                 limit,
-            } => asset_list(
+            }) => asset_list(
                 &db,
                 asset_type.as_deref(),
                 resolve_list_scope(scope, scope_selector)?.as_deref(),
@@ -357,15 +370,23 @@ pub fn execute(path: Option<PathBuf>, command: P0Command) -> Result<()> {
                 json,
                 limit,
             ),
-            AssetCommand::Export {
+            Some(AssetCommand::Export {
                 asset_type,
                 scope,
                 source,
-            } => asset_export(
+            }) => asset_export(
                 &db,
                 asset_type.as_deref(),
                 scope.as_deref(),
                 source.as_deref(),
+            ),
+            None => asset_list(
+                &db,
+                args.asset_type.as_deref(),
+                resolve_list_scope(args.scope, None)?.as_deref(),
+                args.source.as_deref(),
+                args.json,
+                None,
             ),
         },
         P0Command::Tool(args) => {

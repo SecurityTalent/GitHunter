@@ -129,14 +129,48 @@ GitHunter accepts domains, subdomains, IP addresses, IP:port values, URLs,
 paths, ASNs (for example `AS13335`), and CIDRs.
 
 After an import, GitHunter reports how many values were imported, newly added,
-or already known, plus a type and scope summary. View one asset type at a time:
+or already known, plus a type and scope summary. For quick asset views,
+`githunter asset` is a shortcut for `githunter asset list`:
 
 ```bash
-githunter asset list --type ip
-githunter asset list --type url
-githunter asset list --type asn
-githunter asset list --type cidr
+# All tracked assets.
+githunter asset
+
+# Filter by type.
+githunter asset --type domain
+githunter asset --type subdomain
+githunter asset --type ip
+githunter asset --type ip_port
+githunter asset --type url
+githunter asset --type endpoint
+githunter asset --type asn
+githunter asset --type cidr
+githunter asset --type unknown
 ```
+
+Filter by current scope status or observation source:
+
+```bash
+# Assets that have not matched an explicit scope rule yet.
+githunter asset --scope unknown
+
+# Assets explicitly permitted for the project.
+githunter asset --scope in_scope
+
+# Assets explicitly excluded from the project.
+githunter asset --scope out_of_scope
+
+# Assets recorded by a particular source.
+githunter asset --source subfinder
+githunter asset --source httpx
+
+# Filters can be combined.
+githunter asset --type subdomain --scope in_scope
+githunter asset --type url --source httpx
+```
+
+The explicit form remains available and is recommended where a script benefits
+from clarity: `githunter asset list --type domain`.
 
 ### 3. Save a baseline and find changes
 
@@ -218,6 +252,9 @@ and `>`.
 | Import a file | `githunter asset import assets.txt --source recon` |
 | View assets | `githunter asset list` |
 | View only subdomains | `githunter asset list --type subdomain` |
+| View unknown assets | `githunter asset list --scope unknown` |
+| View in-scope assets | `githunter asset list --scope in_scope` |
+| View out-of-scope assets | `githunter asset list --scope out_of_scope` |
 | Export allowed subdomains | `githunter asset export --type subdomain --scope in_scope` |
 | Save a snapshot | `githunter snapshot create --note "baseline"` |
 | Compare recent snapshots | `githunter diff` |
@@ -300,7 +337,11 @@ githunter asset export \
 
 `asset list` has two ways to set the scope filter: `--scope in_scope` or the
 first positional value, such as `githunter asset list all 50`. Use one style,
-not both. `--json` prints machine-readable JSON.
+not both. `--json` prints machine-readable JSON. Omitting the subcommand is a
+shortcut for the flag-based list form: `githunter asset --type domain` is the
+same as `githunter asset list --type domain`. The shortcut supports `--type`,
+`--scope`, `--source`, and `--json`; use `asset list` for positional scope
+selection or a result limit.
 
 ### Saved tools
 

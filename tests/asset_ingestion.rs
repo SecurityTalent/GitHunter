@@ -139,6 +139,22 @@ fn mixed_asset_types_and_deduplication_workflow() {
         .success()
         .stdout(predicate::str::contains("target.com"));
 
+    // `asset` without an operation is a concise alias for `asset list`.
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "--type", "subdomain", "--scope", "in_scope"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("api.target.com"))
+        .stdout(predicate::str::contains("dev.target.com"));
+
+    githunter()
+        .current_dir(dir.path())
+        .args(["asset", "--source", "subfinder", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("subfinder"));
+
     // Status summarizes the persisted assets (not just the most recent import).
     githunter()
         .current_dir(dir.path())
