@@ -47,6 +47,25 @@ To use the code in this repository instead of the installed version:
 cargo run -- --help
 ```
 
+### Update an existing Kali installation
+
+Do not use `mv ~/.cargo/bin/githunter /usr/bin/githunter`: it removes your
+Cargo-managed copy and can leave you using an old binary. Build the current
+source and install a copy in `/usr/local/bin` instead:
+
+```bash
+cd /mnt/c/Users/user/Desktop/hunter
+cargo build --release
+sudo install -m 755 target/release/githunter /usr/local/bin/githunter
+hash -r
+which -a githunter
+githunter --version
+```
+
+`install -m 755` copies the file and makes it executable. On Kali,
+`/usr/local/bin` normally comes before `/usr/bin` in `PATH`, so this new binary
+is chosen instead of an older `/usr/bin/githunter`.
+
 ## Start here: your first project
 
 Make one folder for one authorized target:
