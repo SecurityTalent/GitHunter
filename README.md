@@ -4,9 +4,9 @@
   <img src="src/asset/logo.png" alt="GitHunter logo" width="560">
 </p>
 
-GitHunter is a simple local command-line notebook for **authorized** security
-research. It keeps your target, scope, discovered assets, and notes in one
-folder on your computer. It does not scan anything by itself.
+GitHunter is a simple local **version-control workspace** for authorized
+security research. It keeps your target, scope, discovered assets, and their
+history in one folder on your computer. It does not scan anything by itself.
 
 Use it only for a bug-bounty program, lab, CTF, penetration test, or other
 work where you have permission.
@@ -47,24 +47,21 @@ To use the code in this repository instead of the installed version:
 cargo run -- --help
 ```
 
-### Update an existing Kali installation
+### Update GitHunter on Kali
 
-Do not use `mv ~/.cargo/bin/githunter /usr/bin/githunter`: it removes your
-Cargo-managed copy and can leave you using an old binary. Build the current
-source and install a copy in `/usr/local/bin` instead:
+If `githunter` shows old behaviour, run these commands from this project
+folder:
 
 ```bash
 cd /mnt/c/Users/user/Desktop/hunter
 cargo build --release
-sudo install -m 755 target/release/githunter /usr/local/bin/githunter
-hash -r
-which -a githunter
+sudo cp target/release/githunter /usr/local/bin/githunter
+hash -r # Tell the terminal to use the new command.
 githunter --version
 ```
 
-`install -m 755` copies the file and makes it executable. On Kali,
-`/usr/local/bin` normally comes before `/usr/bin` in `PATH`, so this new binary
-is chosen instead of an older `/usr/bin/githunter`.
+This replaces the GitHunter command with the newly built version. Do not use
+`mv`: it removes the original file instead of copying the new one.
 
 ## Start here: your first project
 
