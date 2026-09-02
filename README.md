@@ -60,6 +60,19 @@ export PATH="$HOME/.cargo/bin:$PATH"
 Add the same line to your shell profile (for example, `~/.bashrc` or `~/.zshrc`)
 to make it persistent.
 
+### System-wide Linux installation
+
+If you want `githunter` available system-wide after installing it with Cargo,
+copy the binary to `/usr/bin` and make it executable:
+
+```bash
+sudo cp ~/.cargo/bin/githunter /usr/bin/githunter
+sudo chmod +x /usr/bin/githunter
+```
+
+This requires administrator privileges and applies to Linux systems that use
+`/usr/bin` for commands on `PATH`.
+
 On Windows, Cargo's normal global bin directory is
 `%USERPROFILE%\.cargo\bin`. The official Rustup installer configures it for
 new PowerShell, Command Prompt, and Windows Terminal sessions. If needed, add
