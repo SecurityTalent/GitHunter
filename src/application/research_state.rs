@@ -1915,7 +1915,34 @@ fn status(db: &Connection) -> Result<()> {
     let project: String = db.query_row("SELECT name FROM projects LIMIT 1", [], |r| r.get(0))?;
     let assets: i64 = db.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))?;
     let snapshots: i64 = db.query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))?;
+
+    let count_assets = |column: &str, value: &str| -> Result<i64> {
+        let query = format!("SELECT COUNT(*) FROM assets WHERE {column} = ?1");
+        Ok(db.query_row(&query, [value], |r| r.get(0))?)
+    };
+
     println!("GITHUNTER STATUS\n\nProject: {project}\nAssets: {assets}\nSnapshots: {snapshots}");
+    println!("\nTypes:");
+    for (label, value) in [
+        ("DOMAIN", "domain"),
+        ("SUBDOMAIN", "subdomain"),
+        ("IP", "ip"),
+        ("IP_PORT", "ip_port"),
+        ("URL", "url"),
+        ("ENDPOINT", "endpoint"),
+        ("ASN", "asn"),
+        ("CIDR", "cidr"),
+        ("UNKNOWN", "unknown"),
+    ] {
+        let count = count_assets("asset_type", value)?;
+        if count > 0 {
+            println!("  {label:<10} {count}");
+        }
+    }
+    println!("\nScope:");
+    for scope in ["IN_SCOPE", "OUT_OF_SCOPE", "UNKNOWN"] {
+        println!("  {scope:<12} {}", count_assets("scope_status", scope)?);
+    }
     Ok(())
 }
 

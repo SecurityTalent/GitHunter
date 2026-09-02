@@ -139,6 +139,19 @@ fn mixed_asset_types_and_deduplication_workflow() {
         .success()
         .stdout(predicate::str::contains("target.com"));
 
+    // Status summarizes the persisted assets (not just the most recent import).
+    githunter()
+        .current_dir(dir.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Assets: 9"))
+        .stdout(predicate::str::contains("Types:"))
+        .stdout(predicate::str::contains("SUBDOMAIN"))
+        .stdout(predicate::str::contains("Scope:"))
+        .stdout(predicate::str::contains("IN_SCOPE"))
+        .stdout(predicate::str::contains("OUT_OF_SCOPE"));
+
     githunter()
         .current_dir(dir.path())
         .args(["asset", "list", "--scope", "out_of_scope"])
