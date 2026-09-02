@@ -194,22 +194,6 @@ githunter tool run subfinder-passive --target example.com
 not pass saved commands to a shell, and rejects shell operators such as `;`
 and `>`.
 
-### How saved tools work
-
-```mermaid
-flowchart LR
-    A[Authorized target] --> B[Saved tool command]
-    B --> C[Live terminal status]
-    C --> D{Import output?}
-    D -->|Default| E[GitHunter assets]
-    D -->|--no-import| F[View result only]
-    E --> G[Snapshots and diff]
-```
-
-`githunter tool run` is always explicit: saving a command never executes it.
-During a run, the terminal shows elapsed time and finishes with `Completed`,
-`Failed`, or `Timed out`.
-
 ## Quick command guide
 
 | If you want to... | Use this command |

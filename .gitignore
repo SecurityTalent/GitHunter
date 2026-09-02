@@ -3,6 +3,7 @@ target/
 **/*.rs.bk
 Cargo.lock.tmp
 updateNeed.md
+blog.md
 
 # GitHunter Local Research Database & Storage
 .githunter/
@@ -30,4 +31,3 @@ desktop.ini
 .env.*
 *.pem
 *.key
-
