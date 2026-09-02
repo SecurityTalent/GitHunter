@@ -81,6 +81,7 @@ fn prompt(label: &str, default: Option<&str>) -> Result<String> {
 fn prompt_for_setup(default_name: &str) -> Result<InitialSetup> {
     println!("GitHunter project setup");
     println!("Enter comma-separated domains for scope fields, or leave them blank.");
+    println!("Use *.example.com (or *example.com) for subdomains only.");
     Ok(InitialSetup {
         name: prompt("Project name", Some(default_name))?,
         primary_target: prompt("Primary target", None)?,

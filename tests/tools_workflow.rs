@@ -9,6 +9,10 @@ fn githunter() -> Command {
 #[test]
 fn tool_and_workflow_management() {
     let dir = tempdir().expect("tempdir");
+    #[cfg(windows)]
+    let (mock_executable, mock_args) = ("cmd", "/c echo api.{target}");
+    #[cfg(not(windows))]
+    let (mock_executable, mock_args) = ("echo", "api.{target}");
 
     githunter()
         .current_dir(dir.path())
@@ -25,11 +29,11 @@ fn tool_and_workflow_management() {
             "--name",
             "mock-echo",
             "--executable",
-            "cmd",
+            mock_executable,
             "--description",
             "Mock echo tool for testing",
             "--args",
-            "/c echo api.{target}",
+            mock_args,
             "--tags",
             "subdomain-discovery,passive",
         ])
@@ -133,6 +137,10 @@ fn tool_and_workflow_management() {
 #[test]
 fn saved_pipeline_is_explicit_and_shell_syntax_is_rejected() {
     let dir = tempdir().expect("tempdir");
+    #[cfg(windows)]
+    let pipeline_command = "cmd /c echo api.{target} | findstr api";
+    #[cfg(not(windows))]
+    let pipeline_command = "echo api.{target} | grep api";
     githunter()
         .current_dir(dir.path())
         .args(["init", "--name", "pipeline-test"])
@@ -148,7 +156,7 @@ fn saved_pipeline_is_explicit_and_shell_syntax_is_rejected() {
         .args([
             "tool",
             "add",
-            "cmd /c echo api.{target} | findstr api",
+            pipeline_command,
             "--name",
             "pipe",
         ])

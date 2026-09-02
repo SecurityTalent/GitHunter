@@ -150,18 +150,29 @@ pub fn normalize(raw: &str) -> Result<String> {
     classify_and_normalize(raw).map(|(_, val)| val)
 }
 
-/// Normalizes an exact or `*.` wildcard scope rule.
+/// Normalizes an exact or wildcard scope rule.
+///
+/// Both `*.example.com` and the commonly-entered `*example.com` form are
+/// accepted. Wildcards always mean subdomains only, and are stored in the
+/// canonical `*.example.com` form.
 pub fn normalize_pattern(raw: &str) -> Result<String> {
     let pattern = raw.trim().trim_end_matches('.').to_ascii_lowercase();
     if pattern.is_empty() {
         bail!("scope rule pattern cannot be empty");
     }
     if let Some(suffix) = pattern.strip_prefix("*.") {
-        normalize(suffix)?;
+        let suffix = normalize(suffix)?;
+        Ok(format!("*.{suffix}"))
+    } else if let Some(suffix) = pattern.strip_prefix('*') {
+        if suffix.is_empty() {
+            bail!("wildcard scope rule must include a domain");
+        }
+        let suffix = normalize(suffix)?;
+        Ok(format!("*.{suffix}"))
     } else {
         normalize(&pattern)?;
+        Ok(pattern)
     }
-    Ok(pattern)
 }
 
 /// Extracts a host/domain/IP from any asset type for scope checking.
@@ -398,6 +409,19 @@ mod tests {
         assert!(matches_pattern("*.example.com", "sub.api.example.com"));
         assert!(!matches_pattern("*.example.com", "example.com"));
         assert!(!matches_pattern("*.example.com", "fakexample.com"));
+    }
+
+    #[test]
+    fn normalizes_wildcard_scope_rule_variants() {
+        assert_eq!(
+            normalize_pattern("*.Example.COM.").unwrap(),
+            "*.example.com"
+        );
+        assert_eq!(
+            normalize_pattern("*Example.COM").unwrap(),
+            "*.example.com"
+        );
+        assert!(normalize_pattern("*").is_err());
     }
 
     #[test]

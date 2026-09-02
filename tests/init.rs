@@ -53,6 +53,28 @@ fn init_without_name_prompts_for_and_saves_initial_setup() {
 }
 
 #[test]
+fn init_accepts_blank_setup_answers_and_shorthand_wildcards() {
+    let directory = tempdir().expect("temporary directory");
+    let mut command = Command::cargo_bin("githunter").expect("githunter binary");
+
+    command
+        .current_dir(directory.path())
+        .arg("init")
+        .write_stdin("blank-project\n\n\n*hackerone.com\n\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialized GitHunter repository."));
+
+    let mut scopes = Command::cargo_bin("githunter").expect("githunter binary");
+    scopes
+        .current_dir(directory.path())
+        .args(["scope", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("IN_SCOPE     *.hackerone.com"));
+}
+
+#[test]
 fn init_refuses_to_overwrite_an_existing_repository() {
     let directory = tempdir().expect("temporary directory");
     let mut first = Command::cargo_bin("githunter").expect("githunter binary");
