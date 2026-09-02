@@ -4,14 +4,18 @@
   <img src="src/asset/logo.png" alt="GitHunter logo" width="560">
 </p>
 
-GitHunter is a simple local **version-control workspace** for authorized
-security research. It keeps your target, scope, discovered assets, and their
-history in one folder on your computer. It does not scan anything by itself.
+> A local, offline workspace for organizing authorized security research.
 
-Use it only for a bug-bounty program, lab, CTF, penetration test, or other
-work where you have permission.
+GitHunter keeps the target, scope rules, discovered assets, and snapshots for
+one research project in a single folder. It does not scan targets by itself.
 
-## What it does
+## Before you start
+
+Use GitHunter only for a bug-bounty program, lab, CTF, penetration test, or
+other work where you have permission. An asset being saved in GitHunter does
+**not** make it authorized to test.
+
+## What you can do
 
 - Saves your project locally in a `.githunter` folder.
 - Keeps a clear list of what is in scope and out of scope.
@@ -45,9 +49,28 @@ cargo build --release
 ./target/release/githunter --help
 ```
 
-## Start here: your first project
+## Start in five minutes
 
-Make one folder for one authorized target:
+Create one folder for one authorized target, initialize a project, add scope,
+and import findings:
+
+```bash
+mkdir example-research
+cd example-research
+githunter init --name example-research
+
+githunter scope add example.com
+githunter scope add "*.example.com"
+
+githunter asset add api.example.com --source manual
+githunter asset
+```
+
+Use `githunter status` to see the project summary at any time.
+
+## Create your first project
+
+Use a separate folder for each authorized target:
 
 ```bash
 mkdir hackerone-test
@@ -68,7 +91,7 @@ In-scope domains: hackerone.com, *.hackerone.com
 Out-of-scope domains:
 ```
 
-Important:
+Scope rules to remember:
 
 - `hackerone.com` means that exact domain.
 - `*.hackerone.com` means subdomains, such as `api.hackerone.com`.
@@ -81,12 +104,12 @@ If you do not want the questions, use:
 githunter init --name hackerone
 ```
 
-## The everyday workflow
+## Everyday workflow
 
 These are the commands most people need. Replace `example.com` with a target
 you are allowed to work on.
 
-### 1. Add or review scope
+### 1. Define and review scope
 
 ```bash
 # Add allowed domains.
@@ -104,7 +127,7 @@ githunter scope check api.example.com
 Only `IN_SCOPE` means the value matches a rule. `OUT_OF_SCOPE` and `UNKNOWN`
 are not permission to test.
 
-### 2. Save findings
+### 2. Add and import assets
 
 Add one finding:
 
@@ -129,8 +152,12 @@ GitHunter accepts domains, subdomains, IP addresses, IP:port values, URLs,
 paths, ASNs (for example `AS13335`), and CIDRs.
 
 After an import, GitHunter reports how many values were imported, newly added,
-or already known, plus a type and scope summary. For quick asset views,
-`githunter asset` is a shortcut for `githunter asset list`:
+or already known, plus a type and scope summary.
+
+### 3. View assets quickly
+
+`githunter asset` is a shortcut for `githunter asset list`. Use it for a
+quick view; keep `asset list` when you prefer the explicit command in scripts.
 
 ```bash
 # All tracked assets.
@@ -148,7 +175,7 @@ githunter asset --type cidr
 githunter asset --type unknown
 ```
 
-Filter by current scope status or observation source:
+Filter by scope status or observation source:
 
 ```bash
 # Assets that have not matched an explicit scope rule yet.
@@ -169,10 +196,7 @@ githunter asset --type subdomain --scope in_scope
 githunter asset --type url --source httpx
 ```
 
-The explicit form remains available and is recommended where a script benefits
-from clarity: `githunter asset list --type domain`.
-
-### 3. Save a baseline and find changes
+### 4. Save a baseline and find changes
 
 ```bash
 githunter snapshot create --note "First findings"
@@ -250,11 +274,11 @@ and `>`.
 | Check scope | `githunter scope check api.example.com` |
 | Add one asset | `githunter asset add api.example.com` |
 | Import a file | `githunter asset import assets.txt --source recon` |
-| View assets | `githunter asset list` |
-| View only subdomains | `githunter asset list --type subdomain` |
-| View unknown assets | `githunter asset list --scope unknown` |
-| View in-scope assets | `githunter asset list --scope in_scope` |
-| View out-of-scope assets | `githunter asset list --scope out_of_scope` |
+| View assets | `githunter asset` |
+| View only subdomains | `githunter asset --type subdomain` |
+| View unknown assets | `githunter asset --scope unknown` |
+| View in-scope assets | `githunter asset --scope in_scope` |
+| View out-of-scope assets | `githunter asset --scope out_of_scope` |
 | Export allowed subdomains | `githunter asset export --type subdomain --scope in_scope` |
 | Save a snapshot | `githunter snapshot create --note "baseline"` |
 | Compare recent snapshots | `githunter diff` |
@@ -314,6 +338,9 @@ lines and lines starting with `#`.
 ### Assets
 
 ```bash
+# Shortcut for `asset list`; supports --type, --scope, --source, and --json.
+githunter asset [--type <type>] [--scope <scope>] [--source <name>] [--json]
+
 # Add one asset. --source defaults to manual.
 githunter asset add <value> --source <name>
 
