@@ -133,10 +133,22 @@ pub enum ScopeOutCommand {
 #[derive(Debug, Args)]
 pub struct AssetArgs {
     /// A shortcut for `asset list`: filter the returned asset type.
-    #[arg(long = "type")]
+    #[arg(
+        long = "type",
+        value_parser = clap::builder::PossibleValuesParser::new([
+            "domain", "subdomain", "ip", "ip_port", "url", "endpoint", "asn", "cidr", "unknown"
+        ]),
+        ignore_case = true
+    )]
     asset_type: Option<String>,
     /// A shortcut for `asset list`: filter by scope status.
-    #[arg(long)]
+    #[arg(
+        long,
+        value_parser = clap::builder::PossibleValuesParser::new([
+            "in_scope", "out_of_scope", "unknown", "all"
+        ]),
+        ignore_case = true
+    )]
     scope: Option<String>,
     /// A shortcut for `asset list`: filter by observation source.
     #[arg(long)]
@@ -167,10 +179,22 @@ pub enum AssetCommand {
     /// List tracked assets with optional filtering.
     List {
         /// Filter by asset type (DOMAIN, SUBDOMAIN, IP, IP_PORT, URL, ENDPOINT, ASN, CIDR)
-        #[arg(long = "type")]
+        #[arg(
+            long = "type",
+            value_parser = clap::builder::PossibleValuesParser::new([
+                "domain", "subdomain", "ip", "ip_port", "url", "endpoint", "asn", "cidr", "unknown"
+            ]),
+            ignore_case = true
+        )]
         asset_type: Option<String>,
         /// Filter by scope status (IN_SCOPE, OUT_OF_SCOPE, UNKNOWN)
-        #[arg(long)]
+        #[arg(
+            long,
+            value_parser = clap::builder::PossibleValuesParser::new([
+                "in_scope", "out_of_scope", "unknown", "all"
+            ]),
+            ignore_case = true
+        )]
         scope: Option<String>,
         /// Filter by observation source
         #[arg(long)]
@@ -186,10 +210,22 @@ pub enum AssetCommand {
     /// Write canonical asset values to stdout, one per line, for Unix pipelines.
     Export {
         /// Filter by asset type.
-        #[arg(long = "type")]
+        #[arg(
+            long = "type",
+            value_parser = clap::builder::PossibleValuesParser::new([
+                "domain", "subdomain", "ip", "ip_port", "url", "endpoint", "asn", "cidr", "unknown"
+            ]),
+            ignore_case = true
+        )]
         asset_type: Option<String>,
         /// Filter by scope status (IN_SCOPE, OUT_OF_SCOPE, UNKNOWN).
-        #[arg(long)]
+        #[arg(
+            long,
+            value_parser = clap::builder::PossibleValuesParser::new([
+                "in_scope", "out_of_scope", "unknown"
+            ]),
+            ignore_case = true
+        )]
         scope: Option<String>,
         /// Filter by observation source.
         #[arg(long)]

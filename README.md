@@ -462,8 +462,59 @@ githunter recommend
 
 ### Shell completions
 
-Generate tab-completion for your shell. Supported values are `bash`, `zsh`,
-`fish`, `powershell`, and `elvish`.
+Tab completion suggests GitHunter commands and their supported options when
+you press <kbd>Tab</kbd>. Generate the script once, then configure your shell
+to load it. Supported shells are `bash`, `zsh`, `fish`, `powershell`, and
+`elvish`.
+
+#### Zsh (Kali default on many installations)
+
+Run this once, then open a new terminal or run `exec zsh`:
+
+```bash
+mkdir -p ~/.zfunc
+githunter completions zsh > ~/.zfunc/_githunter
+echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
+exec zsh
+```
+
+#### Bash
+
+Run this once, then open a new terminal or run `source ~/.bashrc`:
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+githunter completions bash > ~/.local/share/bash-completion/completions/githunter
+echo 'source ~/.local/share/bash-completion/completions/githunter' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Fish
+
+```bash
+mkdir -p ~/.config/fish/completions
+githunter completions fish > ~/.config/fish/completions/githunter.fish
+```
+
+#### PowerShell
+
+Run this once, then restart PowerShell:
+
+```powershell
+$completionDirectory = Split-Path -Parent $PROFILE
+New-Item -ItemType Directory -Force -Path $completionDirectory
+githunter completions powershell | Out-File -Encoding utf8 "$completionDirectory\githunter-completion.ps1"
+Add-Content $PROFILE ". '$completionDirectory\githunter-completion.ps1'"
+```
+
+If pressing <kbd>Tab</kbd> still does not show suggestions, confirm that the
+installed executable is the same one used to generate the script with
+`command -v githunter` (Bash/Zsh/Fish) or `Get-Command githunter` (PowerShell).
+After upgrading GitHunter, run the matching setup command again to refresh the
+completion script.
+
+To generate a script without installing it:
 
 ```bash
 githunter completions bash > githunter.bash

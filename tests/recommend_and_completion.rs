@@ -64,6 +64,14 @@ fn generates_shell_completions() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Register-ArgumentCompleter"));
+
+    githunter()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_githunter"))
+        .stdout(predicate::str::contains("in_scope"))
+        .stdout(predicate::str::contains("subdomain"));
 }
 
 #[test]
