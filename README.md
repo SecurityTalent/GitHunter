@@ -25,6 +25,8 @@ Install with Cargo:
 
 ```bash
 cargo install --git https://github.com/SecurityTalent/GitHunter.git --locked
+sudo cp ~/.cargo/bin/githunter /usr/bin/githunter
+sudo chmod +x /usr/bin/githunter
 githunter --help
 ```
 
